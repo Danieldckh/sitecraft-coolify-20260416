@@ -2,10 +2,12 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Rocket, History, Loader2 } from 'lucide-react';
+import { Rocket, History, Loader2, Eye } from 'lucide-react';
 import { useSite } from '@/hooks/use-site';
+import { FullSitePreview } from '@/components/preview/FullSitePreview';
 
 export function TopBar({ siteId }: { siteId: string }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { data: site } = useSite(siteId);
   const [deploying, setDeploying] = useState(false);
   const [deployInfo, setDeployInfo] = useState<string | null>(null);
@@ -47,6 +49,9 @@ export function TopBar({ siteId }: { siteId: string }) {
             )}
           </span>
         )}
+        <button onClick={() => setPreviewOpen(true)} className="btn-ghost">
+          <Eye className="h-4 w-4" /> Preview
+        </button>
         <Link href={`/sites/${siteId}/changes`} className="btn-ghost">
           <History className="h-4 w-4" /> Changes
         </Link>
@@ -59,6 +64,7 @@ export function TopBar({ siteId }: { siteId: string }) {
           Deploy
         </button>
       </div>
+      {previewOpen && <FullSitePreview siteId={siteId} onClose={() => setPreviewOpen(false)} />}
     </div>
   );
 }

@@ -5,3 +5,7 @@ out
 .env.local
 *.log
 public/uploads
+.deploy-keys
+.playwright-mcp
+tsconfig.tsbuildinfo
+*.png

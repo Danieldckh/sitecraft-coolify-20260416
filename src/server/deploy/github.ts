@@ -41,7 +41,7 @@ export async function ensureDeployRepo(siteId: string, siteSlug: string): Promis
   // Create new repo.
   const { data } = await octokit.rest.repos.createForAuthenticatedUser({
     name: repoName,
-    private: true,
+    private: false,
     auto_init: true,
     description: `Sitecraft deploy bundle for ${siteSlug}`,
   });

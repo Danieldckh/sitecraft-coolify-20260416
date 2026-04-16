@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env
+.env.local
+out
+.playwright-mcp
+test.png
+*.log
+*.md
+*.png
+public/uploads

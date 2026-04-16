@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Skeleton, SkeletonText } from '@/components/common/SkeletonLoader';
 import { BuildTab } from '@/components/builder/BuildTab/BuildTab';
+import { PreviewTab } from '@/components/builder/PreviewTab/PreviewTab';
 import { StyleTab } from '@/components/builder/StyleTab/StyleTab';
 import { useSite, usePatchSite, useStylePresets } from '@/hooks/use-site';
 import { useEditorStore, type EditorTab } from '@/stores/editor';
@@ -78,8 +79,8 @@ export function BuilderShell({ siteId }: { siteId: string }) {
             <TabsContent value="build" className="m-0 p-0">
               <BuildTab siteId={siteId} />
             </TabsContent>
-            <TabsContent value="preview" className="m-0 p-6">
-              <PreviewTabStub />
+            <TabsContent value="preview" className="m-0 h-full p-0">
+              <PreviewTab siteId={siteId} />
             </TabsContent>
             <TabsContent value="style" className="m-0 p-0">
               <StyleTab siteId={siteId} />
@@ -372,16 +373,6 @@ function StubCard({
         </Card>
       </div>
     </div>
-  );
-}
-
-function PreviewTabStub() {
-  return (
-    <StubCard
-      milestone="M5"
-      title="Preview"
-      subtitle="Full-site iframe preview with cross-page navigation and device sizes."
-    />
   );
 }
 

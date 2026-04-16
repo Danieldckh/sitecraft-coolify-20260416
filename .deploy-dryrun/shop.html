@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Shop — Kiln &amp; Ember (demo a8yn)</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--color-surface); color: var(--color-ink); font-family: var(--font-body), system-ui, sans-serif; }
+:root {
+  --color-primary: #d9c9b0;
+  --color-secondary: #c5805e;
+  --color-accent: #2b4f40;
+  --color-surface: #f7f3ec;
+  --color-ink: #4f463a;
+  --color-muted: #a8a499;
+  --font-display: Recoleta;
+  --font-body: Source Serif Pro;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: 4px 4px 0px rgba(0, 0, 0, 0.15);
+  --motion-easing: ease-in-out;
+  --motion-duration: 200ms;
+  --grid-max: 1200px;
+  --grid-gutter: 20px;
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+  --space-7: 64px;
+  --space-8: 96px;
+  --space-9: 128px;
+  --type-0: 12px;
+  --type-1: 14px;
+  --type-2: 16px;
+  --type-3: 20px;
+  --type-4: 24px;
+  --type-5: 32px;
+  --type-6: 48px;
+  --type-7: 64px;
+  --type-8: 72px;
+  --type-9: 96px;
+}
+.sc-header {background-color: var(--color-surface);padding: var(--space-3) var(--space-4);display: flex;flex-direction: row;justify-content: space-between;align-items: center;box-shadow: var(--shadow-lg);}.sc-header-logo h1 {font-family: var(--font-display);color: var(--color-ink);font-size: var(--type-6);margin: 0;}.sc-header nav ul {list-style: none;padding: 0;margin: 0;display: flex;gap: var(--space-4);}.sc-header nav a {font-family: var(--font-body);font-size: var(--type-2);color: var(--color-ink);text-decoration: none;}.sc-header .sc-header-logo:before {content: '';display: block;height: 1px;background-color: var(--color-muted);position: absolute;left: 0;right: 0;margin: 0 auto;}
+.sc-footer {background-color: var(--color-surface);padding: var(--space-4);text-align: center;margin-top: var(--space-6);border-top: 1px solid var(--color-muted);}.sc-footer-content p {font-family: var(--font-body);font-size: var(--type-1);color: var(--color-ink);}
+.sc-btn {background-color: var(--color-primary);color: var(--color-ink);padding: var(--space-2) var(--space-4);border-radius: var(--radius-pill);border: 2px dashed var(--color-accent);font-family: var(--font-body);font-size: var(--type-3);cursor: pointer;transition: background-color var(--motion-durationMs) var(--motion-easing);}.sc-btn:hover {background-color: var(--color-secondary);}
+.sc-card {background-color: var(--color-surface);border: 1px solid var(--color-muted);padding: var(--space-4);border-radius: var(--radius-md);box-shadow: var(--shadow-lg);}.sc-card h2 {font-family: var(--font-display);font-size: var(--type-4);color: var(--color-ink);margin-bottom: var(--space-2);}.sc-card p {font-family: var(--font-body);font-size: var(--type-2);color: var(--color-ink);}.sc-card {border: 2px dashed var(--color-accent);}
+#sc-el-x8f7dq .content-wrapper {
+  text-align: center;
+  padding: var(--spacing-5);
+}
+#sc-el-x8f7dq .headline {
+  font-family: var(--font-display);
+  font-size: var(--type-8);
+  color: var(--color-secondary);
+}
+#sc-el-x8f7dq .subhead {
+  font-family: var(--font-body);
+  font-size: var(--type-5);
+  color: var(--color-muted);
+  max-width: 600px;
+}
+
+#sc-el-k92lvb .gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-4);
+  padding: var(--spacing-5);
+}
+#sc-el-k92lvb .gallery-item {
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  text-align: center;
+}
+#sc-el-k92lvb .item-info {
+  padding: var(--spacing-3);
+}
+#sc-el-k92lvb .item-title {
+  font-family: var(--font-body);
+  font-size: var(--type-4);
+  color: var(--color-ink);
+}
+#sc-el-k92lvb .item-price {
+  font-family: var(--font-body);
+  font-size: var(--type-2);
+  color: var(--color-primary);
+}
+#sc-el-k92lvb .item-note {
+  font-family: var(--font-body);
+  font-size: var(--type-1);
+  color: var(--color-muted);
+}
+
+#sc-el-j8f3kd .filter-wrapper {
+  position: sticky;
+  top: 100px;
+  background-color: var(--color-surface);
+  padding: var(--spacing-4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+#sc-el-j8f3kd .sticky-heading {
+  font-family: var(--font-display);
+  font-size: var(--type-6);
+  color: var(--color-accent);
+}
+#sc-el-j8f3kd .filter-list {
+  list-style: none;
+  padding: 0;
+}
+#sc-el-j8f3kd .filter-item {
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: var(--type-4);
+  color: var(--color-ink);
+  padding: var(--spacing-2) 0;
+  border-bottom: 1px solid var(--color-muted);
+}
+
+#sc-el-d7k5xp .cta-container {
+  background-color: var(--color-secondary);
+  color: var(--color-surface);
+  text-align: center;
+  padding: var(--spacing-6) 0;
+  position: relative;
+}
+#sc-el-d7k5xp .cta-headline {
+  font-family: var(--font-display);
+  font-size: var(--type-7);
+}
+#sc-el-d7k5xp .cta-button {
+  margin-top: var(--spacing-4);
+  background-color: var(--color-accent);
+  color: var(--color-surface);
+  font-family: var(--font-body);
+  font-size: var(--type-3);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--color-surface);
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  transition: background-color var(--motion-durationMs) var(--motion-easing);
+}
+#sc-el-d7k5xp .cta-button:hover {
+  background-color: var(--color-ink);
+}
+</style>
+</head>
+<body>
+<header id="sc-el-header" class="sc-header"><div class="sc-header-logo"><h1>Ceramic Sisters</h1></div><nav><ul><li><a href="#">Home</a></li><li><a href="#">Shop</a></li><li><a href="#">Workshops</a></li><li><a href="#">Our Story</a></li></ul></nav></header>
+<nav class="sc-nav"><a href="/index.html">Home</a><a href="/shop.html">Shop</a><a href="/workshops.html">Workshops</a><a href="/about.html">About</a></nav>
+<main>
+<main>
+  <section id="sc-el-x8f7dq" data-role="hero" data-variant="hero.centered-manifesto">
+    <div class="content-wrapper">
+      <h1 class="headline">Crafted by Hand, Cherished at Home</h1>
+      <p class="subhead">Explore our curated selection of unique, small-batch ceramics.</p>
+    </div>
+  </section>
+
+  <section id="sc-el-k92lvb" data-role="gallery" data-variant="gallery.grid-4">
+    <div class="gallery-grid">
+      <div class="gallery-item">
+        <div class="item-image" alt="Ceramic mug in warm glaze"></div>
+        <div class="item-info">
+          <h2 class="item-title">Coastal Blue Mug</h2>
+          <p class="item-price">$25</p>
+          <p class="item-note">Perfect for your morning brew.</p>
+        </div>
+      </div>
+      <div class="gallery-item">
+        <div class="item-image" alt="Stoneware vase with earthy tint"></div>
+        <div class="item-info">
+          <h2 class="item-title">Sienna Tall Vase</h2>
+          <p class="item-price">$45</p>
+          <p class="item-note">Adds a rustic charm.</p>
+        </div>
+      </div>
+      <div class="gallery-item">
+        <div class="item-image" alt="Hand-thrown cup in natural tones"></div>
+        <div class="item-info">
+          <h2 class="item-title">Garden Path Cup</h2>
+          <p class="item-price">$20</p>
+          <p class="item-note">Inspired by forest meanders.</p>
+        </div>
+      </div>
+      <div class="gallery-item">
+        <div class="item-image" alt="Vase in a unique glaze pattern"></div>
+        <div class="item-info">
+          <h2 class="item-title">Earth &amp; Sky Vase</h2>
+          <p class="item-price">$50</p>
+          <p class="item-note">Handcrafted with care.</p>
+        </div>
+      </div>
+      
+    </div>
+  </section>
+
+  <section id="sc-el-j8f3kd" data-role="features" data-variant="features.split-accordion">
+    <div class="filter-wrapper">
+      <div class="sticky-heading">Glaze Filters</div>
+      <ul class="filter-list">
+        <li class="filter-item">Coastal</li>
+        <li class="filter-item">Sienna</li>
+        <li class="filter-item">Garden Path</li>
+        <li class="filter-item">Earth &amp; Sky</li>
+      </ul>
+    </div>
+    <div class="filter-content">
+      <div class="filter-description">
+        <p>Shop by glaze family to find the perfect piece that fits your home's aesthetic.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="sc-el-d7k5xp" data-role="cta" data-variant="cta.full-bleed-banner">
+    <div class="cta-container">
+      <h2 class="cta-headline">Join Our Seasonal Workshops</h2>
+      <button class="cta-button" role="button">Sign Up</button>
+    </div>
+  </section>
+</main>
+</main>
+<footer id="sc-el-footer" class="sc-footer"><div class="sc-footer-content"><p>© 2023 Ceramic Sisters. Crafted with care in Portland, OR.</p></div></footer>
+</body>
+</html>

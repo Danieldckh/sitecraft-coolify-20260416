@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workshops — Kiln &amp; Ember (demo a8yn)</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--color-surface); color: var(--color-ink); font-family: var(--font-body), system-ui, sans-serif; }
+:root {
+  --color-primary: #d9c9b0;
+  --color-secondary: #c5805e;
+  --color-accent: #2b4f40;
+  --color-surface: #f7f3ec;
+  --color-ink: #4f463a;
+  --color-muted: #a8a499;
+  --font-display: Recoleta;
+  --font-body: Source Serif Pro;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: 4px 4px 0px rgba(0, 0, 0, 0.15);
+  --motion-easing: ease-in-out;
+  --motion-duration: 200ms;
+  --grid-max: 1200px;
+  --grid-gutter: 20px;
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+  --space-7: 64px;
+  --space-8: 96px;
+  --space-9: 128px;
+  --type-0: 12px;
+  --type-1: 14px;
+  --type-2: 16px;
+  --type-3: 20px;
+  --type-4: 24px;
+  --type-5: 32px;
+  --type-6: 48px;
+  --type-7: 64px;
+  --type-8: 72px;
+  --type-9: 96px;
+}
+.sc-header {background-color: var(--color-surface);padding: var(--space-3) var(--space-4);display: flex;flex-direction: row;justify-content: space-between;align-items: center;box-shadow: var(--shadow-lg);}.sc-header-logo h1 {font-family: var(--font-display);color: var(--color-ink);font-size: var(--type-6);margin: 0;}.sc-header nav ul {list-style: none;padding: 0;margin: 0;display: flex;gap: var(--space-4);}.sc-header nav a {font-family: var(--font-body);font-size: var(--type-2);color: var(--color-ink);text-decoration: none;}.sc-header .sc-header-logo:before {content: '';display: block;height: 1px;background-color: var(--color-muted);position: absolute;left: 0;right: 0;margin: 0 auto;}
+.sc-footer {background-color: var(--color-surface);padding: var(--space-4);text-align: center;margin-top: var(--space-6);border-top: 1px solid var(--color-muted);}.sc-footer-content p {font-family: var(--font-body);font-size: var(--type-1);color: var(--color-ink);}
+.sc-btn {background-color: var(--color-primary);color: var(--color-ink);padding: var(--space-2) var(--space-4);border-radius: var(--radius-pill);border: 2px dashed var(--color-accent);font-family: var(--font-body);font-size: var(--type-3);cursor: pointer;transition: background-color var(--motion-durationMs) var(--motion-easing);}.sc-btn:hover {background-color: var(--color-secondary);}
+.sc-card {background-color: var(--color-surface);border: 1px solid var(--color-muted);padding: var(--space-4);border-radius: var(--radius-md);box-shadow: var(--shadow-lg);}.sc-card h2 {font-family: var(--font-display);font-size: var(--type-4);color: var(--color-ink);margin-bottom: var(--space-2);}.sc-card p {font-family: var(--font-body);font-size: var(--type-2);color: var(--color-ink);}.sc-card {border: 2px dashed var(--color-accent);}
+#sc-el-a1x9p .text-container {
+  text-align: center;
+  max-width: 600px;
+  margin: var(--spacing-6) auto;
+}
+#sc-el-a1x9p .headline {
+  font-family: var(--font-display);
+  font-size: var(--type-7);
+  margin-bottom: var(--spacing-4);
+  color: var(--color-ink);
+}
+#sc-el-a1x9p .subhead {
+  font-family: var(--font-body);
+  font-size: var(--type-4);
+  color: var(--color-muted);
+}
+
+#sc-el-d5y1b .timeline-container {
+  padding: var(--spacing-8);
+  background-color: var(--color-surface);
+}
+#sc-el-d5y1b .timeline-item {
+  margin-bottom: var(--spacing-6);
+}
+#sc-el-d5y1b .date {
+  font-family: var(--font-display);
+  font-size: var(--type-5);
+  color: var(--color-accent);
+  display: block;
+}
+#sc-el-d5y1b .description {
+  font-family: var(--font-body);
+  font-size: var(--type-3);
+  color: var(--color-ink);
+  margin-top: var(--spacing-2);
+}
+
+#sc-el-c7p4q .cta-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--color-secondary);
+  color: var(--color-surface);
+  padding: var(--spacing-6);
+  border-radius: var(--radius-md);
+}
+#sc-el-c7p4q .cta-text h3 {
+  font-family: var(--font-display);
+  font-size: var(--type-6);
+  color: var(--color-surface);
+  margin-bottom: var(--spacing-2);
+}
+#sc-el-c7p4q .cta-container p {
+  font-family: var(--font-body);
+  font-size: var(--type-3);
+  margin-right: var(--spacing-4);
+  color: var(--color-surface);
+}
+#sc-el-c7p4q .signup-form {
+  display: flex;
+}
+#sc-el-c7p4q .signup-form input[type="email"] {
+  padding: var(--spacing-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-surface);
+  margin-right: var(--spacing-2);
+}
+#sc-el-c7p4q .signup-button {
+  padding: var(--spacing-2) var(--spacing-4);
+  background-color: var(--color-primary);
+  color: var(--color-ink);
+  border-radius: var(--radius-pill);
+  border: 2px dashed var(--color-secondary);
+  font-family: var(--font-display);
+}
+
+#sc-el-l9b6d .services-container {
+  padding: var(--spacing-8);
+}
+#sc-el-l9b6d .service-item {
+  margin-bottom: var(--spacing-6);
+}
+#sc-el-l9b6d .service-feature {
+  padding: var(--spacing-4);
+  border: 2px dashed var(--color-muted);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-4);
+}
+#sc-el-l9b6d .feature-title {
+  font-family: var(--font-display);
+  font-size: var(--type-5);
+  color: var(--color-accent);
+  margin-bottom: var(--spacing-2);
+}
+#sc-el-l9b6d .feature-description {
+  font-family: var(--font-body);
+  font-size: var(--type-3);
+  color: var(--color-ink);
+}
+</style>
+</head>
+<body>
+<header id="sc-el-header" class="sc-header"><div class="sc-header-logo"><h1>Ceramic Sisters</h1></div><nav><ul><li><a href="#">Home</a></li><li><a href="#">Shop</a></li><li><a href="#">Workshops</a></li><li><a href="#">Our Story</a></li></ul></nav></header>
+<nav class="sc-nav"><a href="/index.html">Home</a><a href="/shop.html">Shop</a><a href="/workshops.html">Workshops</a><a href="/about.html">About</a></nav>
+<main>
+<main>
+  <section id="sc-el-a1x9p" data-role="hero" data-variant="hero.centered-manifesto">
+    <div class="text-container">
+      <h1 class="headline">Hands-on Wheel-Throwing Workshops</h1>
+      <p class="subhead">Join us in turning clay into cherished vessels. Small-class settings taught by our founding sisters.</p>
+    </div>
+  </section>
+  
+  <section id="sc-el-d5y1b" data-role="about-story" data-variant="about-story.timeline-vertical">
+    <div class="timeline-container">
+      <h2 class="sr-only">Workshop Schedule</h2>
+      <div class="timeline-item">
+        <span class="date">March 5, 2023</span>
+        <p class="description">Introduction to Wheel: Perfect for beginners. Learn the basics in a laid-back environment. Capacity: 6 seats.</p>
+      </div>
+      <div class="timeline-item">
+        <span class="date">April 16, 2023</span>
+        <p class="description">Advanced Techniques: For those who've taken at least one prior class. Master your skills. Capacity: 6 seats.</p>
+      </div>
+      <div class="timeline-item">
+        <span class="date">May 21, 2023</span>
+        <p class="description">Family Day: Bring your kids on Sundays! Enjoy a creative day together. Capacity: 6 seats.</p>
+      </div>
+    </div>
+  </section>
+  
+  <section id="sc-el-c7p4q" data-role="cta" data-variant="cta.split-form">
+    <div class="cta-container">
+      <div class="cta-text">
+        <h3>Secure Your Spot</h3>
+        <p>Spaces for our workshops fill quickly. Reserve your place today and start your pottery journey.</p>
+      </div>
+      <form class="signup-form" action="#">
+        <input type="email" name="email" placeholder="Your email" required="" aria-label="Email address">
+        <button type="submit" class="signup-button">Sign Up</button>
+      </form>
+    </div>
+  </section>
+  
+  <section id="sc-el-l9b6d" data-role="services-grid" data-variant="services-grid.numbered-list">
+    <div class="services-container">
+      <div class="service-item">
+        <div class="service-feature">
+          <h2 class="feature-title">01 — Introduction to Wheel</h2>
+          <p class="feature-description">Expect a friendly, open space to learn wheel-throwing basics with personalized attention. No experience needed.</p>
+        </div>
+        <div class="service-feature">
+          <h2 class="feature-title">02 — Advanced Techniques</h2>
+          <p class="feature-description">For those eager to refine their craft, this workshop will take you to the next level, honing complex skills.</p>
+        </div>
+        <div class="service-feature">
+          <h2 class="feature-title">03 — Family Day</h2>
+          <p class="feature-description">Make pottery a family affair! Our Sunday sessions invite young artists and aspiring heirs to the ceramics world.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+</main>
+<footer id="sc-el-footer" class="sc-footer"><div class="sc-footer-content"><p>© 2023 Ceramic Sisters. Crafted with care in Portland, OR.</p></div></footer>
+</body>
+</html>

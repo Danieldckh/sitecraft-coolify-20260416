@@ -2,7 +2,6 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package.json package-lock.json ./
@@ -15,6 +14,8 @@ COPY next.config.ts tailwind.config.ts tsconfig.json next-env.d.ts postcss.confi
 
 RUN npx prisma generate
 RUN npm run build
+
+ENV NODE_ENV=production
 
 EXPOSE 3000
 

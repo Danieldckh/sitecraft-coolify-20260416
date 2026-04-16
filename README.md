@@ -10,7 +10,9 @@ npx prisma db push
 npm run dev
 ```
 
-Open http://localhost:3000/sites.
+Live app: http://us0cs884k4wcwosc80wo8gss.148.230.100.16.sslip.io/sites
+
+Local dev: http://localhost:3000/sites
 
 ## Env
 

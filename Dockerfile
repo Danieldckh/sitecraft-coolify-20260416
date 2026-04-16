@@ -4,10 +4,12 @@ WORKDIR /app
 
 ENV PORT=3000
 
+RUN apk add --no-cache openssl
+
 COPY package.json package-lock.json ./
+COPY prisma ./prisma
 RUN npm ci --legacy-peer-deps
 
-COPY prisma ./prisma
 COPY public ./public
 COPY src ./src
 COPY next.config.ts tailwind.config.ts tsconfig.json next-env.d.ts postcss.config.mjs ./

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { getOpenAI, withRetry } from './client';
 import { ELEMENT_EDIT_SYSTEM } from './prompts';
+import { buildRetryDirective, validateGenerated } from './banlist';
 import type { ThemeDTO } from '@/types/models';
 
 export const ElementEditSchema = z.object({
@@ -42,17 +43,22 @@ export async function streamEditElement(input: StreamEditElementInput): Promise<
     `Current CSS:\n${input.element.css}`,
   ].join('\n');
 
-  try {
+  const baseMessages = [
+    { role: 'system' as const, content: ELEMENT_EDIT_SYSTEM },
+    { role: 'system' as const, content: themeBlock },
+    { role: 'system' as const, content: elementBlock },
+    { role: 'user' as const, content: input.instruction },
+  ];
+
+  const runOnce = async (extraSystem?: string) => {
+    const messages = extraSystem
+      ? [...baseMessages, { role: 'system' as const, content: extraSystem }]
+      : baseMessages;
     const res = await withRetry(() =>
       openai.beta.chat.completions.parse(
         {
           model: 'gpt-4o-2024-08-06',
-          messages: [
-            { role: 'system', content: ELEMENT_EDIT_SYSTEM },
-            { role: 'system', content: themeBlock },
-            { role: 'system', content: elementBlock },
-            { role: 'user', content: input.instruction },
-          ],
+          messages,
           response_format: zodResponseFormat(ElementEditSchema, 'element_edit'),
         },
         { signal: input.signal },
@@ -60,6 +66,15 @@ export async function streamEditElement(input: StreamEditElementInput): Promise<
     );
     const parsed = res.choices[0]?.message.parsed;
     if (!parsed) throw new Error('Element edit returned no structured output');
+    return parsed;
+  };
+
+  try {
+    let parsed = await runOnce();
+    const first = validateGenerated(`${parsed.html}\n${parsed.css}`);
+    if (!first.ok) {
+      parsed = await runOnce(buildRetryDirective(first.violations));
+    }
     input.emit({ type: 'final', result: parsed });
     return parsed;
   } catch (err) {

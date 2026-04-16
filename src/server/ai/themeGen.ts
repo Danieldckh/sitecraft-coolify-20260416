@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { zodResponseFormat } from 'openai/helpers/zod';
 import { getOpenAI, withRetry } from './client';
 import { THEME_SYSTEM } from './prompts';
+import { buildRetryDirective, ThemeGenerationFailed, validateGenerated } from './banlist';
 import { formatStylePresetForPrompt, getStylePreset } from './stylePresets';
 import type { ThemeTokens, ThemeLibrary, ThemePalette } from '@/types/models';
 
@@ -78,19 +79,49 @@ export async function generateTheme(input: GenerateThemeInput): Promise<Generate
     .filter(Boolean)
     .join('\n');
 
-  const res = await withRetry(() =>
-    openai.beta.chat.completions.parse({
-      model: 'gpt-4o-2024-08-06',
-      messages: [
-        { role: 'system', content: THEME_SYSTEM },
-        { role: 'user', content: userBlock },
-      ],
-      response_format: zodResponseFormat(ThemeGenSchema, 'theme'),
-    }),
-  );
+  const baseMessages = [
+    { role: 'system' as const, content: THEME_SYSTEM },
+    { role: 'user' as const, content: userBlock },
+  ];
 
-  const parsed = res.choices[0]?.message.parsed;
-  if (!parsed) throw new Error('Theme generation returned no structured output');
+  const runOnce = async (extraSystem?: string) => {
+    const messages = extraSystem
+      ? [...baseMessages, { role: 'system' as const, content: extraSystem }]
+      : baseMessages;
+    const res = await withRetry(() =>
+      openai.beta.chat.completions.parse({
+        model: 'gpt-4o-2024-08-06',
+        messages,
+        response_format: zodResponseFormat(ThemeGenSchema, 'theme'),
+      }),
+    );
+    const parsed = res.choices[0]?.message.parsed;
+    if (!parsed) throw new Error('Theme generation returned no structured output');
+    return parsed;
+  };
+
+  const themeSurface = (t: { library: ThemeLibrary; signatureMotif: string }) =>
+    [
+      t.signatureMotif,
+      t.library.Header.html,
+      t.library.Header.css,
+      t.library.Footer.html,
+      t.library.Footer.css,
+      t.library.Button.html,
+      t.library.Button.css,
+      t.library.Card.html,
+      t.library.Card.css,
+    ].join('\n');
+
+  let parsed = await runOnce();
+  const first = validateGenerated(themeSurface(parsed));
+  if (!first.ok) {
+    parsed = await runOnce(buildRetryDirective(first.violations));
+    const second = validateGenerated(themeSurface(parsed));
+    if (!second.ok) {
+      throw new ThemeGenerationFailed(second.violations);
+    }
+  }
   return parsed as GeneratedTheme;
 }
 

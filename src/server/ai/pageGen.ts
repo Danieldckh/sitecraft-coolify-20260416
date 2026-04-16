@@ -3,6 +3,11 @@ import { zodResponseFormat } from 'openai/helpers/zod';
 import { getOpenAI, withRetry } from './client';
 import { PAGE_SYSTEM } from './prompts';
 import { SECTION_VARIANTS } from './variants';
+import {
+  buildRetryDirective,
+  stripExternalImages,
+  validateGenerated,
+} from './banlist';
 import type { SectionRole, ThemeDTO } from '@/types/models';
 
 const SECTION_ROLES = [
@@ -40,6 +45,7 @@ export type GeneratedPage = z.infer<typeof PageGenSchema>;
 export type PageStreamEvent =
   | { type: 'partial'; delta: string }
   | { type: 'final'; page: GeneratedPage }
+  | { type: 'violation'; violations: string[]; retried: boolean; stripped: boolean }
   | { type: 'error'; message: string };
 
 export interface StreamGeneratePageInput {
@@ -88,17 +94,22 @@ export async function streamGeneratePage(input: StreamGeneratePageInput): Promis
     `Site brief: ${input.siteBrief || '(none)'}`,
   ].join('\n');
 
-  try {
+  const baseMessages = [
+    { role: 'system' as const, content: PAGE_SYSTEM },
+    { role: 'system' as const, content: themeBlock },
+    { role: 'system' as const, content: variantBlock },
+    { role: 'user' as const, content: pageBlock },
+  ];
+
+  const runOnce = async (extraSystem?: string) => {
+    const messages = extraSystem
+      ? [...baseMessages, { role: 'system' as const, content: extraSystem }]
+      : baseMessages;
     const res = await withRetry(() =>
       openai.beta.chat.completions.parse(
         {
           model: 'gpt-4o-2024-08-06',
-          messages: [
-            { role: 'system', content: PAGE_SYSTEM },
-            { role: 'system', content: themeBlock },
-            { role: 'system', content: variantBlock },
-            { role: 'user', content: pageBlock },
-          ],
+          messages,
           response_format: zodResponseFormat(PageGenSchema, 'page'),
         },
         { signal: input.signal },
@@ -106,6 +117,33 @@ export async function streamGeneratePage(input: StreamGeneratePageInput): Promis
     );
     const parsed = res.choices[0]?.message.parsed;
     if (!parsed) throw new Error('Page generation returned no structured output');
+    return parsed;
+  };
+
+  try {
+    let parsed = await runOnce();
+    let combined = `${parsed.html}\n${parsed.css}`;
+    let first = validateGenerated(combined);
+    if (!first.ok) {
+      input.emit({ type: 'violation', violations: first.violations, retried: true, stripped: false });
+      parsed = await runOnce(buildRetryDirective(first.violations));
+      combined = `${parsed.html}\n${parsed.css}`;
+      const second = validateGenerated(combined);
+      if (!second.ok) {
+        // Strip external images as last resort; keep other violations as warning.
+        const cleanedHtml = stripExternalImages(parsed.html);
+        parsed = { ...parsed, html: cleanedHtml };
+        const postStrip = validateGenerated(`${cleanedHtml}\n${parsed.css}`);
+        input.emit({
+          type: 'violation',
+          violations: postStrip.violations,
+          retried: false,
+          stripped: true,
+        });
+        // eslint-disable-next-line no-console
+        console.warn('[pageGen] ban-list violations persisted after retry; stripped images and continuing', postStrip.violations);
+      }
+    }
     input.emit({ type: 'final', page: parsed });
     return parsed;
   } catch (err) {

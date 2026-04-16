@@ -39,10 +39,12 @@ function formatTimestamp(iso: string) {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-const SCOPE_ICON: Record<Exclude<Scope, 'all'>, React.ComponentType<{ className?: string }>> = {
+const SCOPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   site: Globe,
   page: FileEdit,
   section: Layers,
+  theme: Globe,
+  element: Layers,
 };
 
 export default function ChangesPage({ params }: { params: Promise<{ id: string }> }) {

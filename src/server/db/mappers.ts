@@ -1,6 +1,31 @@
-import type { Site, Page, Section, ChangeLogEntry, Deployment, MemoryEntry } from '@prisma/client';
 import type {
-  SiteDTO, PageDTO, SectionDTO, ChangeLogDTO, DeploymentDTO, SectionType,
+  Site,
+  Page,
+  Element,
+  Theme,
+  Asset,
+  Conversation,
+  Question,
+  ChangeLogEntry,
+  Deployment,
+  MemoryEntry,
+} from '@prisma/client';
+import type {
+  SiteDTO,
+  PageDTO,
+  ElementDTO,
+  ThemeDTO,
+  ThemeTokens,
+  ThemeLibrary,
+  ThemePalette,
+  AssetDTO,
+  ConversationDTO,
+  QuestionDTO,
+  ConversationScope,
+  ChangeLogDTO,
+  DeploymentDTO,
+  SectionRole,
+  SectionDTO,
 } from '@/types/models';
 
 export function toSiteDTO(s: Site): SiteDTO {
@@ -8,6 +33,7 @@ export function toSiteDTO(s: Site): SiteDTO {
     id: s.id,
     name: s.name,
     sitePrompt: s.sitePrompt,
+    stylePresetId: s.stylePresetId,
     domain: s.domain,
     locked: s.locked,
     memorySummary: s.memorySummary,
@@ -23,25 +49,116 @@ export function toPageDTO(p: Page): PageDTO {
     name: p.name,
     slug: p.slug,
     pagePrompt: p.pagePrompt,
+    pageHtml: p.pageHtml,
+    pageCss: p.pageCss,
+    pageJs: p.pageJs,
     locked: p.locked,
     orderIdx: p.orderIdx,
     navVisible: p.navVisible,
+    lastGeneratedAt: p.lastGeneratedAt?.toISOString() ?? null,
   };
 }
 
-export function toSectionDTO(s: Section): SectionDTO {
+export function toElementDTO(e: Element): ElementDTO {
   return {
-    id: s.id,
-    pageId: s.pageId,
-    type: s.type as SectionType,
-    sectionPrompt: s.sectionPrompt,
-    locked: s.locked,
-    orderIdx: s.orderIdx,
-    html: s.html,
-    css: s.css,
-    js: s.js,
-    referenceImageUrl: s.referenceImageUrl,
-    lastGeneratedAt: s.lastGeneratedAt?.toISOString() ?? null,
+    id: e.id,
+    pageId: e.pageId,
+    selectorId: e.selectorId,
+    role: e.role as SectionRole,
+    variantId: e.variantId,
+    prompt: e.prompt,
+    html: e.html,
+    css: e.css,
+    locked: e.locked,
+    lastEditedAt: e.lastEditedAt?.toISOString() ?? null,
+  };
+}
+
+function safeParse<T>(json: string, fallback: T): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+const EMPTY_TOKENS: ThemeTokens = {
+  radius: { sm: '4px', md: '8px', lg: '16px', pill: '999px' },
+  shadow: { sm: 'none', md: 'none', lg: 'none' },
+  spacing: [0, 4, 8, 12, 16, 24, 32, 48, 64, 96],
+  typeScale: [12, 14, 16, 18, 22, 28, 36, 48, 64, 80],
+  motion: { easing: 'ease', durationMs: 200, style: 'subtle' },
+  grid: { maxWidth: '1200px', gutter: '24px', columns: 12 },
+};
+
+const EMPTY_LIB: ThemeLibrary = {
+  Header: { html: '', css: '' },
+  Footer: { html: '', css: '' },
+  Button: { html: '', css: '' },
+  Card: { html: '', css: '' },
+};
+
+const EMPTY_PALETTE: ThemePalette = {
+  primary: '#111',
+  secondary: '#666',
+  accent: '#f33',
+  surface: '#fff',
+  ink: '#111',
+  muted: '#999',
+};
+
+export function toThemeDTO(t: Theme): ThemeDTO {
+  return {
+    id: t.id,
+    siteId: t.siteId,
+    stylePresetId: t.stylePresetId,
+    tokens: safeParse<ThemeTokens>(t.tokensJson, EMPTY_TOKENS),
+    signatureMotif: t.signatureMotif,
+    library: safeParse<ThemeLibrary>(t.libraryJson, EMPTY_LIB),
+    primaryFont: t.primaryFont,
+    secondaryFont: t.secondaryFont,
+    palette: safeParse<ThemePalette>(t.paletteJson, EMPTY_PALETTE),
+    lastGeneratedAt: t.lastGeneratedAt?.toISOString() ?? null,
+  };
+}
+
+export function toAssetDTO(a: Asset): AssetDTO {
+  return {
+    id: a.id,
+    siteId: a.siteId,
+    kind: a.kind as AssetDTO['kind'],
+    url: a.url,
+    mime: a.mime,
+    sizeBytes: a.sizeBytes,
+    meta: safeParse<Record<string, unknown>>(a.meta, {}),
+    createdAt: a.createdAt.toISOString(),
+  };
+}
+
+export function toQuestionDTO(q: Question): QuestionDTO {
+  return {
+    id: q.id,
+    conversationId: q.conversationId,
+    kind: q.kind as QuestionDTO['kind'],
+    question: q.question,
+    choices: q.choicesJson ? safeParse<string[]>(q.choicesJson, []) : null,
+    response: q.response,
+    responseAssetId: q.responseAssetId,
+    orderIdx: q.orderIdx,
+  };
+}
+
+export function toConversationDTO(
+  c: Conversation & { questions: Question[] },
+): ConversationDTO {
+  return {
+    id: c.id,
+    siteId: c.siteId,
+    scope: c.scope as ConversationScope,
+    targetId: c.targetId,
+    questions: [...c.questions]
+      .sort((a, b) => a.orderIdx - b.orderIdx)
+      .map(toQuestionDTO),
   };
 }
 
@@ -80,5 +197,23 @@ export function toMemoryEntry(m: MemoryEntry) {
     kind: m.kind,
     content: m.content,
     createdAt: m.createdAt.toISOString(),
+  };
+}
+
+// Legacy shim — returns an empty SectionDTO-shaped object given an Element.
+// Only used by remaining v1 UI/routes that will be removed in Phase 2.
+export function toSectionDTO(e: Element): SectionDTO {
+  return {
+    id: e.id,
+    pageId: e.pageId,
+    type: 'custom',
+    sectionPrompt: e.prompt,
+    locked: e.locked,
+    orderIdx: 0,
+    html: e.html,
+    css: e.css,
+    js: '',
+    referenceImageUrl: null,
+    lastGeneratedAt: e.lastEditedAt?.toISOString() ?? null,
   };
 }

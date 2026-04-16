@@ -9,9 +9,18 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+export type MemoryKind =
+  | 'change_request'
+  | 'decision'
+  | 'generation'
+  | 'vision'
+  | 'theme'
+  | 'page'
+  | 'element';
+
 export interface AppendMemoryInput {
   role: 'system' | 'user' | 'ai';
-  kind: 'change_request' | 'decision' | 'generation' | 'vision';
+  kind: MemoryKind;
   content: string;
 }
 

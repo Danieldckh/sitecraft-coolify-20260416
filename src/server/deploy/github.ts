@@ -5,6 +5,19 @@ import type { BundleFile } from './bundler';
 
 export const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
 
+// Only repos carrying this topic may be pushed to by Sitecraft. Prevents
+// accidental overwrites of pre-existing unrelated repositories.
+export const SITECRAFT_REPO_MARKER = 'sitecraft-deploy';
+
+async function assertRepoMarker(owner: string, repo: string): Promise<void> {
+  const { data } = await octokit.rest.repos.getAllTopics({ owner, repo });
+  if (!data.names.includes(SITECRAFT_REPO_MARKER)) {
+    throw new Error(
+      `Refusing to push: GitHub repo ${owner}/${repo} lacks the required topic "${SITECRAFT_REPO_MARKER}". Add the topic if this repo is safe for Sitecraft to overwrite.`,
+    );
+  }
+}
+
 export interface DeployRepo {
   owner: string;
   repo: string;
@@ -28,6 +41,7 @@ export async function ensureDeployRepo(siteId: string, siteSlug: string): Promis
 
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo: repoName });
+    await assertRepoMarker(data.owner.login, data.name);
     return {
       owner: data.owner.login,
       repo: data.name,
@@ -38,13 +52,22 @@ export async function ensureDeployRepo(siteId: string, siteSlug: string): Promis
     if (e.status !== 404) throw e;
   }
 
-  // Create new repo.
+  // Create new repo and immediately tag it with the marker topic.
   const { data } = await octokit.rest.repos.createForAuthenticatedUser({
     name: repoName,
     private: false,
     auto_init: true,
     description: `Sitecraft deploy bundle for ${siteSlug}`,
   });
+  try {
+    await octokit.rest.repos.replaceAllTopics({
+      owner: data.owner.login,
+      repo: data.name,
+      names: [SITECRAFT_REPO_MARKER],
+    });
+  } catch (err) {
+    console.error('[github] failed to tag repo with marker topic', err);
+  }
   void existing;
   return {
     owner: data.owner.login,
@@ -61,6 +84,7 @@ export async function pushBundle(
   message = 'Deploy bundle update',
   branch = 'main',
 ): Promise<{ commitSha: string }> {
+  await assertRepoMarker(owner, repo);
   const ref = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${branch}` });
   const baseCommitSha = ref.data.object.sha;
   const baseCommit = await octokit.rest.git.getCommit({

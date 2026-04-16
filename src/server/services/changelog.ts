@@ -1,8 +1,10 @@
 import { prisma } from '@/server/db/client';
 
+export type ChangeScope = 'site' | 'theme' | 'page' | 'element' | 'section';
+
 export async function logChange(args: {
   siteId: string;
-  scope: 'site' | 'page' | 'section';
+  scope: ChangeScope;
   targetId: string;
   summary: string;
   before?: unknown;

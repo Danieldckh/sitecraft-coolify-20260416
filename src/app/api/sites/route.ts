@@ -4,7 +4,7 @@ import { prisma } from '@/server/db/client';
 import { toSiteDTO } from '@/server/db/mappers';
 import { handleError, parseJson } from '@/server/http';
 import { logChange } from '@/server/services/changelog';
-import { regenerateSitemapFor } from '@/server/services/regenerate';
+import { STYLE_PRESET_IDS } from '@/server/ai/stylePresets';
 
 export const runtime = 'nodejs';
 
@@ -20,17 +20,21 @@ export async function GET() {
 const CreateSiteBody = z.object({
   name: z.string().min(1).max(120),
   sitePrompt: z.string().max(8000).optional().default(''),
+  stylePresetId: z.string().optional(),
   domain: z.string().max(255).optional().nullable(),
-  generate: z.boolean().optional().default(true),
 });
 
 export async function POST(req: Request) {
   try {
     const body = CreateSiteBody.parse(await parseJson(req));
+    if (body.stylePresetId && !STYLE_PRESET_IDS.includes(body.stylePresetId)) {
+      return NextResponse.json({ error: `Unknown style preset: ${body.stylePresetId}` }, { status: 400 });
+    }
     const site = await prisma.site.create({
       data: {
         name: body.name,
         sitePrompt: body.sitePrompt ?? '',
+        stylePresetId: body.stylePresetId ?? null,
         domain: body.domain ?? null,
       },
     });
@@ -39,13 +43,8 @@ export async function POST(req: Request) {
       scope: 'site',
       targetId: site.id,
       summary: `Created site "${site.name}"`,
-      after: { name: site.name, sitePrompt: site.sitePrompt },
+      after: { name: site.name, sitePrompt: site.sitePrompt, stylePresetId: site.stylePresetId },
     });
-    if (body.generate && site.sitePrompt.trim().length > 0) {
-      void regenerateSitemapFor(site.id).catch((err) =>
-        console.error('[sites.POST] regenerate failed', err),
-      );
-    }
     return NextResponse.json(toSiteDTO(site), { status: 201 });
   } catch (err) {
     return handleError(err);

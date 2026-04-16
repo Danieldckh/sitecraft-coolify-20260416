@@ -5,7 +5,6 @@ import { toPageDTO } from '@/server/db/mappers';
 import { handleError, notFound, parseJson } from '@/server/http';
 import { logChange } from '@/server/services/changelog';
 import { uniquePageSlug } from '@/server/services/slug';
-import { regeneratePageFor } from '@/server/services/regenerate';
 
 export const runtime = 'nodejs';
 
@@ -15,7 +14,6 @@ const CreatePageBody = z.object({
   slug: z.string().max(64).optional(),
   pagePrompt: z.string().max(8000).optional().default(''),
   navVisible: z.boolean().optional().default(true),
-  generate: z.boolean().optional().default(true),
 });
 
 export async function POST(req: Request) {
@@ -47,15 +45,6 @@ export async function POST(req: Request) {
       summary: `Created page "${page.name}"`,
       after: { name: page.name, slug: page.slug },
     });
-
-    // Always auto-generate full page (sections + code) after creation unless explicitly opted out.
-    // Page prompt can be empty — the AI will infer from site context.
-    if (body.generate) {
-      // Fire-and-forget; UI polls / refetches. Keeps POST fast.
-      void regeneratePageFor(page.id).catch((err) =>
-        console.error('[pages.POST] regenerate failed', err),
-      );
-    }
 
     return NextResponse.json(toPageDTO(page), { status: 201 });
   } catch (err) {

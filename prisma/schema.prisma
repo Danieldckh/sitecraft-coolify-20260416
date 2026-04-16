@@ -11,6 +11,7 @@ model Site {
   id             String   @id @default(cuid())
   name           String
   sitePrompt     String   @default("")
+  stylePresetId  String?
   domain         String?
   locked         Boolean  @default(false)
   memorySummary  String   @default("")
@@ -18,50 +19,115 @@ model Site {
   updatedAt      DateTime @updatedAt
 
   pages          Page[]
+  theme          Theme?
+  assets         Asset[]
+  conversations  Conversation[]
   memoryEntries  MemoryEntry[]
   changeLog      ChangeLogEntry[]
   deployments    Deployment[]
-  assets         Asset[]
 
   @@index([createdAt])
 }
 
-model Page {
-  id         String   @id @default(cuid())
-  siteId     String
-  site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  name       String
-  slug       String
-  pagePrompt String   @default("")
-  locked     Boolean  @default(false)
-  orderIdx   Int      @default(0)
-  navVisible Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model Theme {
+  id               String   @id @default(cuid())
+  siteId           String   @unique
+  site             Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  stylePresetId    String
+  tokensJson       String   @default("{}")
+  signatureMotif   String   @default("")
+  libraryJson      String   @default("{}") // { Header:{html,css}, Footer:{html,css}, Button:{html,css}, Card:{html,css} }
+  primaryFont      String   @default("")
+  secondaryFont   String    @default("")
+  paletteJson      String   @default("{}") // { primary, secondary, accent, surface, ink, muted }
+  lastGeneratedAt  DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
 
-  sections   Section[]
+model Page {
+  id              String   @id @default(cuid())
+  siteId          String
+  site            Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name            String
+  slug            String
+  pagePrompt      String   @default("")
+  pageHtml        String   @default("")
+  pageCss         String   @default("")
+  pageJs          String   @default("")
+  orderIdx        Int      @default(0)
+  navVisible      Boolean  @default(true)
+  locked          Boolean  @default(false)
+  lastGeneratedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  elements        Element[]
 
   @@unique([siteId, slug])
   @@index([siteId, orderIdx])
 }
 
-model Section {
-  id                 String   @id @default(cuid())
-  pageId             String
-  page               Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  type               String   // header | hero | features | cta | footer | custom | ...
-  sectionPrompt      String   @default("")
-  locked             Boolean  @default(false)
-  orderIdx           Int      @default(0)
-  html               String   @default("")
-  css                String   @default("")
-  js                 String   @default("")
-  referenceImageUrl  String?
-  lastGeneratedAt    DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+model Element {
+  id            String   @id @default(cuid())
+  pageId        String
+  page          Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  selectorId    String   // "sc-el-<cuid>"
+  role          String   // hero|features|cta|testimonials|gallery|pricing|faq|contact|about-story|services-grid|footer-big|header-nav|custom
+  variantId     String   @default("")
+  prompt        String   @default("")
+  html          String   @default("")
+  css           String   @default("")
+  locked        Boolean  @default(false)
+  lastEditedAt  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  @@index([pageId, orderIdx])
+  @@unique([pageId, selectorId])
+  @@index([pageId])
+}
+
+model Asset {
+  id         String   @id @default(cuid())
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  kind       String   // logo | image | favicon | font
+  url        String
+  mime       String
+  sizeBytes  Int
+  meta       String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([siteId])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  scope     String   // site | page | element
+  targetId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  questions Question[]
+
+  @@index([siteId])
+}
+
+model Question {
+  id               String   @id @default(cuid())
+  conversationId   String
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  kind             String   // text | choice | upload | boolean
+  question         String
+  choicesJson      String?
+  response         String?
+  responseAssetId  String?
+  orderIdx         Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  @@index([conversationId, orderIdx])
 }
 
 model MemoryEntry {
@@ -69,7 +135,7 @@ model MemoryEntry {
   siteId    String
   site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
   role      String   // system | user | ai
-  kind      String   // change_request | decision | generation | vision
+  kind      String   // change_request | decision | generation | vision | theme | page | element
   content   String
   createdAt DateTime @default(now())
 
@@ -80,7 +146,7 @@ model ChangeLogEntry {
   id        String   @id @default(cuid())
   siteId    String
   site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  scope     String   // site | page | section
+  scope     String   // site | theme | page | element
   targetId  String
   actor     String   @default("user")
   summary   String
@@ -103,17 +169,4 @@ model Deployment {
   updatedAt       DateTime @updatedAt
 
   @@index([siteId, createdAt])
-}
-
-model Asset {
-  id        String   @id @default(cuid())
-  siteId    String
-  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  kind      String   // image | font
-  url       String
-  mime      String
-  sizeBytes Int
-  createdAt DateTime @default(now())
-
-  @@index([siteId])
 }

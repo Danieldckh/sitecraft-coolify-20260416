@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/server/db/client';
-import { toPageDTO, toSectionDTO } from '@/server/db/mappers';
+import { toPageDTO, toElementDTO } from '@/server/db/mappers';
 import { handleError, notFound, parseJson } from '@/server/http';
 import { logChange } from '@/server/services/changelog';
 import { enforceLock } from '@/server/services/locks';
 import { uniquePageSlug, slugify } from '@/server/services/slug';
-import { regeneratePageFor } from '@/server/services/regenerate';
 
 export const runtime = 'nodejs';
 
@@ -15,12 +14,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const { id } = await params;
     const page = await prisma.page.findUnique({
       where: { id },
-      include: { sections: { orderBy: { orderIdx: 'asc' } } },
+      include: { elements: true },
     });
     if (!page) return notFound('Page not found');
     return NextResponse.json({
       page: toPageDTO(page),
-      sections: page.sections.map(toSectionDTO),
+      elements: page.elements.map(toElementDTO),
     });
   } catch (err) {
     return handleError(err);
@@ -73,16 +72,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       after: updated,
     });
 
-    if (promptChanging) {
-      try {
-        await regeneratePageFor(id);
-      } catch (err) {
-        console.error('[pages.PATCH] regenerate failed', err);
-      }
-    }
-
-    const fresh = await prisma.page.findUnique({ where: { id } });
-    return NextResponse.json({ page: toPageDTO(fresh!) });
+    return NextResponse.json({ page: toPageDTO(updated) });
   } catch (err) {
     return handleError(err);
   }

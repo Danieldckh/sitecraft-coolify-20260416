@@ -53,7 +53,7 @@ async function maybeSummarize(siteId: string): Promise<void> {
         {
           role: 'system',
           content:
-            'You maintain a rolling project memory for an AI website builder. Given the existing summary and a log of new events, produce an updated summary of at most 800 tokens. Preserve durable facts (brand, audience, tone, explicit user decisions, locked structural choices). Drop superseded details. Return plain prose, no headings.',
+            `You maintain a rolling design memo for ONE specific website being designed (site name: "${site.name}"). The memo describes the website itself — its brand, audience, value proposition, tone of voice, visual style, product/service details, locked structural choices, and durable decisions the user has made about the site's content. It does NOT describe the builder tool, the editor, or the AI process. Given the existing memo and a log of new events, return an updated memo of at most 800 tokens as plain prose (no headings). Drop superseded or tool-related noise; keep only facts about this website.`,
         },
         { role: 'system', content: `Existing summary:\n${site.memorySummary || '(none)'}` },
         { role: 'user', content: `Event log:\n${joined}` },

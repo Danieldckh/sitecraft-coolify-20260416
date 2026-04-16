@@ -42,14 +42,11 @@ export async function POST(req: Request) {
       after: { name: site.name, sitePrompt: site.sitePrompt },
     });
     if (body.generate && site.sitePrompt.trim().length > 0) {
-      try {
-        await regenerateSitemapFor(site.id);
-      } catch (err) {
-        console.error('[sites.POST] regenerate failed', err);
-      }
+      void regenerateSitemapFor(site.id).catch((err) =>
+        console.error('[sites.POST] regenerate failed', err),
+      );
     }
-    const fresh = await prisma.site.findUnique({ where: { id: site.id } });
-    return NextResponse.json(toSiteDTO(fresh!), { status: 201 });
+    return NextResponse.json(toSiteDTO(site), { status: 201 });
   } catch (err) {
     return handleError(err);
   }

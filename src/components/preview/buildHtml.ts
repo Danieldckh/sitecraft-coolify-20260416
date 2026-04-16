@@ -50,6 +50,34 @@ export function buildPreview({ page, sitemap }: BuildHtmlInput): BuiltParts {
 
   const nav = renderNav(sitemap, page.id);
 
+  const slugMap = JSON.stringify(
+    Object.fromEntries(sitemap.map((p) => [p.slug.toLowerCase(), p.slug])),
+  );
+  const navBridge = `
+    (function(){
+      var slugs = ${slugMap};
+      function resolve(href){
+        if (!href) return null;
+        var h = String(href).trim().toLowerCase();
+        if (h.startsWith('#page-')) return slugs[h.slice(6)] || null;
+        if (h.startsWith('#')) return null;
+        // strip origin, query, trailing slash, .html
+        h = h.replace(/^https?:\\/\\/[^\\/]+/, '').split('?')[0].split('#')[0];
+        h = h.replace(/\\.html?$/, '').replace(/^\\//, '').replace(/\\/$/, '');
+        if (!h || h === 'index' || h === 'home') return slugs['home'] || null;
+        return slugs[h] || null;
+      }
+      document.addEventListener('click', function(e){
+        var a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        var slug = a.getAttribute('data-page-slug') || resolve(a.getAttribute('href'));
+        if (!slug) { e.preventDefault(); return; }
+        e.preventDefault();
+        parent.postMessage({ type: 'sitecraft:navigate', slug: slug }, '*');
+      }, true);
+    })();
+  `;
+
   const baseCss = `
     *, *::before, *::after { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; color: #0b0d12; background: #fff; }
@@ -70,6 +98,7 @@ export function buildPreview({ page, sitemap }: BuildHtmlInput): BuiltParts {
 <body>
 ${nav}
 <main>${html}</main>
+<script>${navBridge}</script>
 <script>${js}</script>
 </body>
 </html>`;

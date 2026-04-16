@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, Monitor, Tablet, Smartphone } from 'lucide-react';
 import type { PageDTO, SectionDTO } from '@/types/models';
@@ -33,6 +33,17 @@ export function FullSitePreview({ siteId, onClose }: { siteId: string; onClose: 
 
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [device, setDevice] = useState<Device>('desktop');
+
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      const data = e.data;
+      if (!data || data.type !== 'sitecraft:navigate' || typeof data.slug !== 'string') return;
+      const target = pages.find((p) => p.slug === data.slug);
+      if (target) setSelectedPageId(target.id);
+    }
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [pages]);
 
   const currentId = selectedPageId ?? pages[0]?.id ?? null;
   const current = pages.find((p) => p.id === currentId);

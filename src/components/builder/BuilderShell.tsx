@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Skeleton, SkeletonText } from '@/components/common/SkeletonLoader';
 import { BuildTab } from '@/components/builder/BuildTab/BuildTab';
+import { StyleTab } from '@/components/builder/StyleTab/StyleTab';
 import { useSite, usePatchSite, useStylePresets } from '@/hooks/use-site';
 import { useEditorStore, type EditorTab } from '@/stores/editor';
 import { cn } from '@/lib/cn';
@@ -80,8 +81,8 @@ export function BuilderShell({ siteId }: { siteId: string }) {
             <TabsContent value="preview" className="m-0 p-6">
               <PreviewTabStub />
             </TabsContent>
-            <TabsContent value="style" className="m-0 p-6">
-              <StyleTabStub />
+            <TabsContent value="style" className="m-0 p-0">
+              <StyleTab siteId={siteId} />
             </TabsContent>
           </main>
         </div>
@@ -384,12 +385,3 @@ function PreviewTabStub() {
   );
 }
 
-function StyleTabStub() {
-  return (
-    <StubCard
-      milestone="M6"
-      title="Style"
-      subtitle="Tweak palette, fonts, radius, shadow, motion — live without regenerating content."
-    />
-  );
-}

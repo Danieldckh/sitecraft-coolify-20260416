@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Monitor, RefreshCw, Smartphone, Sparkles, Tablet } from 'lucide-react';
 
 import { Button } from '@/components/ui/Button';
@@ -14,11 +14,13 @@ import {
   SelectValue,
 } from '@/components/ui/Select';
 import { Label } from '@/components/ui/Label';
+import { Switch } from '@/components/ui/Switch';
 import { cn } from '@/lib/cn';
 import { usePages, useSite, useTheme } from '@/hooks/use-site';
-import { useEditorStore } from '@/stores/editor';
+import { useEditorStore, type InspectorSelection } from '@/stores/editor';
 import type { PageDTO } from '@/types/models';
 import { buildFullSiteDoc } from './buildFullSiteDoc';
+import { InspectorPopover } from './InspectorPopover';
 
 type Viewport = 'desktop' | 'tablet' | 'mobile';
 
@@ -35,6 +37,10 @@ export function PreviewTab({ siteId }: { siteId: string }) {
   const storePageId = useEditorStore((s) => s.selectedPageId);
   const setSelectedPageId = useEditorStore((s) => s.setSelectedPageId);
   const setTab = useEditorStore((s) => s.setTab);
+  const inspectorOn = useEditorStore((s) => s.inspectorOn);
+  const setInspectorOn = useEditorStore((s) => s.setInspectorOn);
+  const inspectorSelection = useEditorStore((s) => s.inspectorSelection);
+  const setInspectorSelection = useEditorStore((s) => s.setInspectorSelection);
 
   const activePage: PageDTO | null = useMemo(() => {
     if (!pages || pages.length === 0) return null;
@@ -172,6 +178,18 @@ export function PreviewTab({ siteId }: { siteId: string }) {
           })}
         </div>
 
+        <label className="flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 py-1">
+          <span className="text-xs font-medium text-[var(--text-secondary)]">Edit mode</span>
+          <Switch
+            checked={inspectorOn}
+            onCheckedChange={(b) => {
+              setInspectorOn(b);
+              if (!b) setInspectorSelection(null);
+            }}
+            aria-label="Toggle edit mode"
+          />
+        </label>
+
         <Button
           variant="ghost"
           size="icon"
@@ -209,6 +227,11 @@ export function PreviewTab({ siteId }: { siteId: string }) {
         width={VIEWPORTS[viewport].width}
         siteName={site?.name ?? 'Preview'}
         activeSlug={activePage?.slug ?? ''}
+        siteId={siteId}
+        pageId={activePage?.id ?? ''}
+        inspectorOn={inspectorOn}
+        inspectorSelection={inspectorSelection}
+        onInspectorSelect={setInspectorSelection}
         onNavigate={(slug) => {
           const match = pages.find((p) => p.slug === slug);
           if (match) setSelectedPageId(match.id);
@@ -218,58 +241,160 @@ export function PreviewTab({ siteId }: { siteId: string }) {
   );
 }
 
+interface PreviewFrameProps {
+  srcDoc: string;
+  width: number;
+  siteName: string;
+  activeSlug: string;
+  siteId: string;
+  pageId: string;
+  inspectorOn: boolean;
+  inspectorSelection: InspectorSelection | null;
+  onInspectorSelect: (sel: InspectorSelection | null) => void;
+  onNavigate: (slug: string) => void;
+}
+
 function PreviewFrame({
   srcDoc,
   width,
   siteName,
   activeSlug,
+  siteId,
+  pageId,
+  inspectorOn,
+  inspectorSelection,
+  onInspectorSelect,
   onNavigate,
-}: {
-  srcDoc: string;
-  width: number;
-  siteName: string;
-  activeSlug: string;
-  onNavigate: (slug: string) => void;
-}) {
+}: PreviewFrameProps) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const textResolverRef = useRef<
+    Map<string, (value: string) => void>
+  >(new Map());
 
-  // Listen for navigation messages from the iframe.
+  const postToFrame = useCallback((msg: unknown) => {
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(msg, '*');
+  }, []);
+
+  // Listen for iframe messages: navigation + inspector events.
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
       if (ev.source !== frameRef.current?.contentWindow) return;
       const d = ev.data;
-      if (d && d.type === 'sc-navigate' && typeof d.slug === 'string') {
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'sc-navigate' && typeof d.slug === 'string') {
         onNavigate(d.slug);
+      } else if (d.type === 'sc-inspector-select') {
+        const frame = frameRef.current;
+        if (!frame) return;
+        const frameRect = frame.getBoundingClientRect();
+        const r = d.boundingClientRect ?? { top: 0, left: 0, width: 0, height: 0 };
+        onInspectorSelect({
+          selectorId: String(d.selectorId || ''),
+          tagName: String(d.tagName || 'div'),
+          textPreview: String(d.textPreview || ''),
+          promoted: Boolean(d.promoted),
+          rect: {
+            top: frameRect.top + r.top,
+            left: frameRect.left + r.left,
+            width: r.width,
+            height: r.height,
+          },
+        });
+      } else if (d.type === 'sc-inspector-text-value' && typeof d.selectorId === 'string') {
+        const resolver = textResolverRef.current.get(d.selectorId);
+        if (resolver) {
+          resolver(String(d.text ?? ''));
+          textResolverRef.current.delete(d.selectorId);
+        }
       }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [onNavigate]);
+  }, [onNavigate, onInspectorSelect]);
 
   // Post navigation into the iframe when the parent selection changes.
   useEffect(() => {
     if (!activeSlug) return;
-    const win = frameRef.current?.contentWindow;
-    if (!win) return;
-    win.postMessage({ type: 'sc-navigate', slug: activeSlug }, '*');
-  }, [activeSlug, srcDoc]);
+    postToFrame({ type: 'sc-navigate', slug: activeSlug });
+  }, [activeSlug, srcDoc, postToFrame]);
+
+  // Toggle inspector mode inside iframe.
+  useEffect(() => {
+    postToFrame({ type: 'sc-inspector-mode', enabled: inspectorOn });
+    if (!inspectorOn) {
+      postToFrame({ type: 'sc-inspector-deselect' });
+    }
+  }, [inspectorOn, srcDoc, postToFrame]);
+
+  const applyReplace = useCallback(
+    (selectorId: string, html: string, css?: string) => {
+      postToFrame({ type: 'sc-inspector-replace', selectorId, html, css });
+    },
+    [postToFrame],
+  );
+
+  const liveText = useCallback(
+    (selectorId: string, text: string) => {
+      postToFrame({ type: 'sc-inspector-text', selectorId, text });
+    },
+    [postToFrame],
+  );
+
+  const requestText = useCallback(
+    (selectorId: string) => {
+      return new Promise<string>((resolve) => {
+        // Drop any stale resolver for the same id.
+        textResolverRef.current.set(selectorId, resolve);
+        postToFrame({ type: 'sc-inspector-get-text', selectorId });
+        // Timeout fallback
+        setTimeout(() => {
+          const r = textResolverRef.current.get(selectorId);
+          if (r) {
+            textResolverRef.current.delete(selectorId);
+            r('');
+          }
+        }, 800);
+      });
+    },
+    [postToFrame],
+  );
+
+  const closeInspector = useCallback(() => {
+    onInspectorSelect(null);
+    postToFrame({ type: 'sc-inspector-deselect' });
+  }, [onInspectorSelect, postToFrame]);
 
   return (
-    <div
-      className={cn(
-        'mx-auto flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border',
-        'border-[var(--border-subtle)] bg-[var(--bg-sunken)] shadow-[var(--shadow-md)]',
-      )}
-      style={{ width: '100%', maxWidth: width }}
-    >
-      <iframe
-        ref={frameRef}
-        title={`Preview of ${siteName}`}
-        sandbox="allow-scripts"
-        srcDoc={srcDoc}
-        className="h-full w-full flex-1 border-0 bg-white"
-        style={{ minHeight: 600 }}
-      />
-    </div>
+    <>
+      <div
+        className={cn(
+          'mx-auto flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border',
+          'border-[var(--border-subtle)] bg-[var(--bg-sunken)] shadow-[var(--shadow-md)]',
+        )}
+        style={{ width: '100%', maxWidth: width }}
+      >
+        <iframe
+          ref={frameRef}
+          title={`Preview of ${siteName}`}
+          sandbox="allow-scripts"
+          srcDoc={srcDoc}
+          className="h-full w-full flex-1 border-0 bg-white"
+          style={{ minHeight: 600 }}
+        />
+      </div>
+      {inspectorOn && inspectorSelection && pageId ? (
+        <InspectorPopover
+          siteId={siteId}
+          pageId={pageId}
+          selection={inspectorSelection}
+          onClose={closeInspector}
+          onApplyReplace={applyReplace}
+          onLiveText={liveText}
+          requestText={requestText}
+        />
+      ) : null}
+    </>
   );
 }

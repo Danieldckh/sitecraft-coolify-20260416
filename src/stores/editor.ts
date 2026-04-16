@@ -15,6 +15,14 @@ export interface StreamingState {
   error: string | null;
 }
 
+export interface InspectorSelection {
+  selectorId: string;
+  rect: { top: number; left: number; width: number; height: number };
+  tagName: string;
+  textPreview: string;
+  promoted: boolean;
+}
+
 interface EditorState {
   tab: EditorTab;
   setTab: (t: EditorTab) => void;
@@ -28,6 +36,10 @@ interface EditorState {
   setStreamingState: (s: StreamingState | null) => void;
   themeStreaming: boolean;
   setThemeStreaming: (b: boolean) => void;
+  inspectorOn: boolean;
+  setInspectorOn: (b: boolean) => void;
+  inspectorSelection: InspectorSelection | null;
+  setInspectorSelection: (sel: InspectorSelection | null) => void;
 }
 
 function initialAssetsDrawerOpen(): boolean {
@@ -48,4 +60,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   setStreamingState: (streamingState) => set({ streamingState }),
   themeStreaming: false,
   setThemeStreaming: (themeStreaming) => set({ themeStreaming }),
+  inspectorOn: false,
+  setInspectorOn: (inspectorOn) => set({ inspectorOn }),
+  inspectorSelection: null,
+  setInspectorSelection: (inspectorSelection) => set({ inspectorSelection }),
 }));

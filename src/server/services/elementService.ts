@@ -2,7 +2,7 @@ import { prisma } from '@/server/db/client';
 import { streamEditElement, type ElementStreamEvent } from '@/server/ai/elementEdit';
 import { appendMemory } from '@/server/ai/memory';
 import { logChange } from './changelog';
-import { enforceElementLock } from './locks';
+import { enforceElementLock, enforceLock } from './locks';
 import { withSiteLock } from './mutex';
 import { toElementDTO, toThemeDTO } from '@/server/db/mappers';
 import type { ElementDTO } from '@/types/models';
@@ -70,6 +70,68 @@ export async function editElement(
     });
 
     return toElementDTO(updated);
+  });
+}
+
+export interface UpsertElementInput {
+  selectorId: string;
+  role?: string;
+  variantId?: string;
+  prompt?: string;
+  html?: string;
+  css?: string;
+}
+
+export async function upsertElementBySelector(
+  pageId: string,
+  data: UpsertElementInput,
+  opts: { force?: boolean } = {},
+): Promise<ElementDTO> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    include: { site: true },
+  });
+  if (!page) throw new Error(`Page ${pageId} not found`);
+  enforceLock(page, opts.force, 'Page');
+
+  return withSiteLock(page.siteId, async () => {
+    const existing = await prisma.element.findUnique({
+      where: { pageId_selectorId: { pageId, selectorId: data.selectorId } },
+    });
+    if (existing) {
+      enforceElementLock(existing, opts.force);
+      const updated = await prisma.element.update({
+        where: { id: existing.id },
+        data: {
+          ...(data.role !== undefined ? { role: data.role } : {}),
+          ...(data.variantId !== undefined ? { variantId: data.variantId } : {}),
+          ...(data.prompt !== undefined ? { prompt: data.prompt } : {}),
+          ...(data.html !== undefined ? { html: data.html } : {}),
+          ...(data.css !== undefined ? { css: data.css } : {}),
+          lastEditedAt: new Date(),
+        },
+      });
+      return toElementDTO(updated);
+    }
+    const created = await prisma.element.create({
+      data: {
+        pageId,
+        selectorId: data.selectorId,
+        role: data.role ?? 'custom',
+        variantId: data.variantId ?? '',
+        prompt: data.prompt ?? '',
+        html: data.html ?? '',
+        css: data.css ?? '',
+      },
+    });
+    await logChange({
+      siteId: page.siteId,
+      scope: 'element',
+      targetId: created.id,
+      summary: `Materialized element ${created.selectorId} on ${page.slug}`,
+      after: { selectorId: created.selectorId, role: created.role },
+    });
+    return toElementDTO(created);
   });
 }
 

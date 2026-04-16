@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "smoke:phase3": "tsx scripts/smoke-phase3.ts",
+    "smoke:phase4": "tsx scripts/smoke-phase4.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

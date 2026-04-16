@@ -165,6 +165,229 @@ ${bodyHtml}
 })();
 `;
 
+  const inspectorScript = `
+(function(){
+  var docEl = document.documentElement;
+  var hoverEl = null;
+  var selectedEl = null;
+  var overlayHover = null;
+  var overlaySelected = null;
+  var chipHover = null;
+  var chipSelected = null;
+
+  function ensureStyles(){
+    if (document.getElementById('sc-inspector-style')) return;
+    var s = document.createElement('style');
+    s.id = 'sc-inspector-style';
+    s.textContent =
+      '.sc-inspector-on, .sc-inspector-on * { cursor: crosshair !important; }' +
+      '.sc-inspector-overlay { position: absolute; pointer-events: none; z-index: 2147483646; border-radius: 2px; box-sizing: border-box; transition: all 80ms ease-out; }' +
+      '.sc-inspector-overlay--hover { outline: 2px solid #4f46e5; background: rgba(79,70,229,0.06); }' +
+      '.sc-inspector-overlay--selected { outline: 2px solid #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,0.18); background: rgba(37,99,235,0.08); }' +
+      '.sc-inspector-chip { position: absolute; z-index: 2147483647; pointer-events: none; background: #111827; color: #fff; font: 11px/1.4 ui-sans-serif,system-ui,sans-serif; padding: 2px 6px; border-radius: 4px; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }' +
+      '.sc-inspector-chip--selected { background: #2563eb; }';
+    document.head.appendChild(s);
+  }
+
+  function findTarget(el){
+    var cur = el;
+    var promoted = false;
+    while (cur && cur !== document.body) {
+      var id = cur.id || '';
+      if (id.indexOf('sc-el-') === 0) return { el: cur, promoted: promoted };
+      cur = cur.parentElement;
+      promoted = true;
+    }
+    return null;
+  }
+
+  function measure(el){
+    var r = el.getBoundingClientRect();
+    var sx = window.scrollX || window.pageXOffset || 0;
+    var sy = window.scrollY || window.pageYOffset || 0;
+    return { top: r.top + sy, left: r.left + sx, width: r.width, height: r.height, viewportTop: r.top, viewportLeft: r.left };
+  }
+
+  function positionOverlay(overlay, chip, el, variant){
+    var m = measure(el);
+    overlay.style.top = m.top + 'px';
+    overlay.style.left = m.left + 'px';
+    overlay.style.width = m.width + 'px';
+    overlay.style.height = m.height + 'px';
+    chip.style.top = Math.max(0, m.top - 20) + 'px';
+    chip.style.left = m.left + 'px';
+    var id = (el.id || '').replace(/^sc-el-/, '');
+    var trimmed = id.length > 10 ? id.slice(0, 8) + '…' : id;
+    chip.textContent = el.tagName.toLowerCase() + (trimmed ? ' · ' + trimmed : '') + (variant === 'hover' ? '' : ' (selected)');
+  }
+
+  function ensureOverlays(){
+    if (!overlayHover) {
+      overlayHover = document.createElement('div');
+      overlayHover.className = 'sc-inspector-overlay sc-inspector-overlay--hover';
+      chipHover = document.createElement('div');
+      chipHover.className = 'sc-inspector-chip';
+    }
+    if (!overlaySelected) {
+      overlaySelected = document.createElement('div');
+      overlaySelected.className = 'sc-inspector-overlay sc-inspector-overlay--selected';
+      chipSelected = document.createElement('div');
+      chipSelected.className = 'sc-inspector-chip sc-inspector-chip--selected';
+    }
+  }
+
+  function attachOverlays(){
+    ensureOverlays();
+    if (!overlayHover.parentNode) document.body.appendChild(overlayHover);
+    if (!chipHover.parentNode) document.body.appendChild(chipHover);
+    hideHover();
+    hideSelected();
+  }
+
+  function detachOverlays(){
+    [overlayHover, overlaySelected, chipHover, chipSelected].forEach(function(n){ if (n && n.parentNode) n.parentNode.removeChild(n); });
+    hoverEl = null; selectedEl = null;
+  }
+
+  function showHover(el){
+    if (!overlayHover || !chipHover) return;
+    if (!overlayHover.parentNode) document.body.appendChild(overlayHover);
+    if (!chipHover.parentNode) document.body.appendChild(chipHover);
+    overlayHover.style.display = 'block';
+    chipHover.style.display = 'block';
+    positionOverlay(overlayHover, chipHover, el, 'hover');
+  }
+  function hideHover(){
+    if (overlayHover) overlayHover.style.display = 'none';
+    if (chipHover) chipHover.style.display = 'none';
+    hoverEl = null;
+  }
+  function showSelected(el){
+    ensureOverlays();
+    if (!overlaySelected.parentNode) document.body.appendChild(overlaySelected);
+    if (!chipSelected.parentNode) document.body.appendChild(chipSelected);
+    overlaySelected.style.display = 'block';
+    chipSelected.style.display = 'block';
+    positionOverlay(overlaySelected, chipSelected, el, 'selected');
+  }
+  function hideSelected(){
+    if (overlaySelected) overlaySelected.style.display = 'none';
+    if (chipSelected) chipSelected.style.display = 'none';
+    selectedEl = null;
+  }
+
+  function onMouseOver(ev){
+    if (!docEl.classList.contains('sc-inspector-on')) return;
+    var hit = findTarget(ev.target);
+    if (!hit) { hideHover(); return; }
+    if (hit.el === selectedEl) { hideHover(); return; }
+    if (hit.el === hoverEl) return;
+    hoverEl = hit.el;
+    showHover(hit.el);
+  }
+  function onMouseOut(ev){
+    if (!docEl.classList.contains('sc-inspector-on')) return;
+    if (!ev.relatedTarget) hideHover();
+  }
+  function onClick(ev){
+    if (!docEl.classList.contains('sc-inspector-on')) return;
+    var hit = findTarget(ev.target);
+    if (!hit) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    selectedEl = hit.el;
+    hideHover();
+    showSelected(hit.el);
+    var r = hit.el.getBoundingClientRect();
+    var text = (hit.el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    try {
+      window.parent && window.parent.postMessage({
+        type: 'sc-inspector-select',
+        selectorId: hit.el.id,
+        tagName: hit.el.tagName.toLowerCase(),
+        textPreview: text,
+        promoted: hit.promoted,
+        boundingClientRect: { top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom, right: r.right }
+      }, '*');
+    } catch(e){}
+  }
+
+  function setMode(on){
+    ensureStyles();
+    if (on) {
+      docEl.classList.add('sc-inspector-on');
+      docEl.setAttribute('data-sc-inspector', 'on');
+      attachOverlays();
+    } else {
+      docEl.classList.remove('sc-inspector-on');
+      docEl.removeAttribute('data-sc-inspector');
+      detachOverlays();
+    }
+  }
+
+  function findBySelectorId(selId){
+    if (!selId) return null;
+    return document.getElementById(selId);
+  }
+
+  function reposition(){
+    if (selectedEl && document.body.contains(selectedEl)) positionOverlay(overlaySelected, chipSelected, selectedEl, 'selected');
+    if (hoverEl && document.body.contains(hoverEl)) positionOverlay(overlayHover, chipHover, hoverEl, 'hover');
+  }
+
+  window.addEventListener('message', function(ev){
+    var d = ev.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'sc-inspector-mode') {
+      setMode(!!d.enabled);
+    } else if (d.type === 'sc-inspector-deselect') {
+      hideSelected();
+    } else if (d.type === 'sc-inspector-replace' && d.selectorId) {
+      var el = findBySelectorId(d.selectorId);
+      if (el && typeof d.html === 'string') {
+        el.innerHTML = d.html;
+      }
+      if (typeof d.css === 'string' && d.css) {
+        var styleId = 'sc-el-style-' + d.selectorId;
+        var existing = document.getElementById(styleId);
+        if (existing) existing.textContent = d.css;
+        else {
+          var s = document.createElement('style');
+          s.id = styleId;
+          s.textContent = d.css;
+          document.head.appendChild(s);
+        }
+      }
+      if (el && selectedEl === el) setTimeout(reposition, 0);
+    } else if (d.type === 'sc-inspector-text' && d.selectorId) {
+      var el2 = findBySelectorId(d.selectorId);
+      if (el2 && typeof d.text === 'string') {
+        el2.textContent = d.text;
+        if (selectedEl === el2) setTimeout(reposition, 0);
+      }
+    } else if (d.type === 'sc-inspector-get-text' && d.selectorId) {
+      var el3 = findBySelectorId(d.selectorId);
+      var txt = el3 ? (el3.textContent || '') : '';
+      try {
+        window.parent && window.parent.postMessage({
+          type: 'sc-inspector-text-value',
+          selectorId: d.selectorId,
+          text: txt
+        }, '*');
+      } catch(e){}
+    }
+  });
+
+  document.addEventListener('mouseover', onMouseOver, true);
+  document.addEventListener('mouseout', onMouseOut, true);
+  document.addEventListener('click', onClick, true);
+  window.addEventListener('resize', reposition);
+  window.addEventListener('scroll', reposition, true);
+
+  ensureStyles();
+})();
+`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -190,6 +413,9 @@ ${sectionsHtml}
 ${footerHtml}
 <script>
 ${routerScript}
+</script>
+<script>
+${inspectorScript}
 </script>
 ${pageScripts ? `<script>\n${pageScripts}\n</script>` : ''}
 </body>

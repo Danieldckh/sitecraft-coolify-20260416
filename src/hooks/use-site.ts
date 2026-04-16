@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { SiteDTO, PageDTO, SectionDTO } from '@/types/models';
+import type { SiteDTO, PageDTO } from '@/types/models';
 import type { StylePreset } from '@/server/ai/stylePresets';
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
@@ -118,12 +118,12 @@ export function useStylePresets() {
   return useQuery({
     queryKey: ['style-presets'],
     queryFn: () => j<{ stylePresets: StylePreset[] }>('/api/style-presets'),
-    staleTime: 60 * 60 * 1000, // 1 hour
+    staleTime: 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
   });
 }
 
-// ─── Pages (kept for M3 editor; do not extend here) ───────────────────────
+// ─── Pages ────────────────────────────────────────────────────────────────
 
 export function usePages(siteId: string) {
   return useQuery({
@@ -160,48 +160,4 @@ export function useDeletePage(siteId: string) {
     mutationFn: (id: string) => j(`/api/pages/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pages', siteId] }),
   });
-}
-
-// ─── Section hooks (DEPRECATED — v1 dead code) ────────────────────────────
-// TODO(m3): the legacy editor under src/components/editor still imports these.
-// They will be deleted together with that editor in Milestone 3. Kept as
-// no-op stubs so the build stays green until then. Do NOT wire these up to
-// anything new.
-
-export function useSections(_siteId: string) {
-  return useQuery<SectionDTO[]>({
-    queryKey: ['sections', _siteId, 'deprecated'],
-    queryFn: async () => [],
-    enabled: false,
-  });
-}
-
-export function useAddSection(_siteId: string) {
-  return useMutation({
-    mutationFn: async (_body: unknown): Promise<SectionDTO> => {
-      throw new Error('useAddSection is deprecated in v2');
-    },
-  });
-}
-
-export function useDeleteSection(_siteId: string) {
-  return useMutation({
-    mutationFn: async (_id: string): Promise<void> => {
-      throw new Error('useDeleteSection is deprecated in v2');
-    },
-  });
-}
-
-export function usePatchSection(_siteId: string) {
-  return useMutation({
-    mutationFn: async (_v: { id: string; patch: Partial<SectionDTO> }): Promise<SectionDTO> => {
-      throw new Error('usePatchSection is deprecated in v2');
-    },
-  });
-}
-
-export function useInvalidateSection(_siteId: string) {
-  return (_id: string) => {
-    /* no-op */
-  };
 }

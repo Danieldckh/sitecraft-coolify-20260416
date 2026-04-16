@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Lock } from 'lucide-react';
 
+import { Textarea } from '@/components/ui/Textarea';
+
 export function PromptEditor({
   value,
   locked,
@@ -28,8 +30,7 @@ export function PromptEditor({
 
   return (
     <div className="relative">
-      <textarea
-        className="textarea disabled:cursor-not-allowed disabled:opacity-60"
+      <Textarea
         value={draft}
         disabled={locked}
         rows={rows}
@@ -43,7 +44,7 @@ export function PromptEditor({
         }}
       />
       {locked && (
-        <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+        <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 rounded bg-[var(--color-warning-50)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-warning-700)]">
           <Lock className="h-3 w-3" /> unlock to edit
         </div>
       )}

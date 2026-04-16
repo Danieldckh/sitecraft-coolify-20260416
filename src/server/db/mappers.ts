@@ -25,7 +25,6 @@ import type {
   ChangeLogDTO,
   DeploymentDTO,
   SectionRole,
-  SectionDTO,
 } from '@/types/models';
 
 export function toSiteDTO(s: Site): SiteDTO {
@@ -200,20 +199,3 @@ export function toMemoryEntry(m: MemoryEntry) {
   };
 }
 
-// Legacy shim — returns an empty SectionDTO-shaped object given an Element.
-// Only used by remaining v1 UI/routes that will be removed in Phase 2.
-export function toSectionDTO(e: Element): SectionDTO {
-  return {
-    id: e.id,
-    pageId: e.pageId,
-    type: 'custom',
-    sectionPrompt: e.prompt,
-    locked: e.locked,
-    orderIdx: 0,
-    html: e.html,
-    css: e.css,
-    js: '',
-    referenceImageUrl: null,
-    lastGeneratedAt: e.lastEditedAt?.toISOString() ?? null,
-  };
-}

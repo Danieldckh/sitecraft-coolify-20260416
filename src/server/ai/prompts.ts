@@ -4,12 +4,6 @@
 // locked content) must be *appended* by the caller, never spliced into these
 // constants.
 //
-// Legacy aliases (SITE_SYSTEM_PROMPT, PAGE_SYSTEM_PROMPT, SECTION_SYSTEM_PROMPT,
-// DEFAULT_SECTION_PROMPTS) are retained at the bottom of this file so v1 code
-// paths still compile until Phase 2 removes them.
-
-import type { SectionType } from '../../types/models';
-
 // -----------------------------------------------------------------------------
 // Shared anti-generic preamble. Do not reorder — prefix-cache depends on it.
 // -----------------------------------------------------------------------------
@@ -223,23 +217,3 @@ ELEMENT-EDIT-SPECIFIC RULES:
 Return ONLY the JSON matching the provided schema. No prose.
 `.trim();
 
-// -----------------------------------------------------------------------------
-// Legacy aliases (v1). Kept so remaining v1 code paths compile. Phase 2 removes.
-// -----------------------------------------------------------------------------
-export const SITE_SYSTEM_PROMPT = THEME_SYSTEM;
-export const PAGE_SYSTEM_PROMPT = PAGE_SYSTEM;
-export const SECTION_SYSTEM_PROMPT = ELEMENT_EDIT_SYSTEM;
-
-export const DEFAULT_SECTION_PROMPTS: Record<SectionType, string> = {
-  header: '',
-  hero: '',
-  features: '',
-  cta: '',
-  footer: '',
-  gallery: '',
-  testimonials: '',
-  pricing: '',
-  faq: '',
-  contact: '',
-  custom: '',
-};

@@ -34,23 +34,6 @@ export const SECTION_ROLES: SectionRole[] = [
   'custom',
 ];
 
-// Legacy v1 alias kept so pre-Phase-2 UI files still typecheck.
-// Phase 2 rebuild will delete these along with the UI.
-export type SectionType =
-  | 'header'
-  | 'hero'
-  | 'features'
-  | 'cta'
-  | 'footer'
-  | 'gallery'
-  | 'testimonials'
-  | 'pricing'
-  | 'faq'
-  | 'contact'
-  | 'custom';
-
-export const DEFAULT_SECTION_TYPES: SectionType[] = ['header', 'hero', 'features', 'cta', 'footer'];
-
 export interface SiteDTO {
   id: string;
   name: string;
@@ -184,17 +167,3 @@ export interface DeploymentDTO {
   updatedAt: string;
 }
 
-// Legacy SectionDTO kept for v1 UI typecheck only.
-export interface SectionDTO {
-  id: string;
-  pageId: string;
-  type: SectionType;
-  sectionPrompt: string;
-  locked: boolean;
-  orderIdx: number;
-  html: string;
-  css: string;
-  js: string;
-  referenceImageUrl: string | null;
-  lastGeneratedAt: string | null;
-}

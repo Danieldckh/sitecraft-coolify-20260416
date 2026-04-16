@@ -12,6 +12,9 @@
     "db:studio": "prisma studio",
     "smoke:phase3": "tsx scripts/smoke-phase3.ts",
     "smoke:phase4": "tsx scripts/smoke-phase4.ts",
+    "smoke:security": "tsx scripts/smoke-security.ts",
+    "smoke:deploy": "tsx scripts/smoke-deploy.ts",
+    "e2e": "tsx scripts/e2e-phase5.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

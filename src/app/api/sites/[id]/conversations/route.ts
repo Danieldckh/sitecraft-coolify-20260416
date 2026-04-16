@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { handleError, parseJson } from '@/server/http';
 import { startClarifierTurn } from '@/server/services/conversationService';
+import { enforceRateLimit } from '@/server/rateLimit';
 
 export const runtime = 'nodejs';
 
@@ -13,6 +14,8 @@ const Body = z.object({
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const limited = enforceRateLimit(req, 'ai');
+    if (limited) return limited;
     const { id } = await params;
     const body = Body.parse(await parseJson(req));
     const convo = await startClarifierTurn({

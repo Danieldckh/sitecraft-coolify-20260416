@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { handleError, parseJson } from '@/server/http';
 import { editElement } from '@/server/services/elementService';
+import { enforceRateLimit } from '@/server/rateLimit';
 
 export const runtime = 'nodejs';
 
@@ -11,6 +12,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string; eid: string }> },
 ) {
   try {
+    const limited = enforceRateLimit(req, 'ai');
+    if (limited) return limited;
     const { id, eid } = await params;
     const body = Body.parse(await parseJson(req));
     const encoder = new TextEncoder();

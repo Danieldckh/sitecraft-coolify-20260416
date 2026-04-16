@@ -6,7 +6,12 @@ import { toAssetDTO } from '@/server/db/mappers';
 import type { AssetDTO } from '@/types/models';
 
 const ALLOWED_KINDS = new Set(['logo', 'image', 'favicon', 'font']);
-const MAX_BYTES = 8 * 1024 * 1024;
+// MAX_UPLOAD_MB overrides; defaults to 5MB as a conservative cap.
+const MAX_BYTES = (() => {
+  const raw = process.env.MAX_UPLOAD_MB;
+  const n = raw ? Number(raw) : 5;
+  return (Number.isFinite(n) && n > 0 ? n : 5) * 1024 * 1024;
+})();
 
 export async function storeAsset(input: {
   siteId: string;

@@ -1,10 +1,13 @@
 import { handleError } from '@/server/http';
 import { generatePage } from '@/server/services/pageService';
+import { enforceRateLimit } from '@/server/rateLimit';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const limited = enforceRateLimit(req, 'ai');
+    if (limited) return limited;
     const { id } = await params;
     const encoder = new TextEncoder();
 

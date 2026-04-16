@@ -1,5 +1,16 @@
 import { env } from '@/server/env';
 
+// Strips anything that looks like an Authorization header or bearer token from
+// a string. Used defensively on error bodies we log/persist so a misbehaving
+// upstream echoing our token can't leak it.
+export function redactSecrets(s: string): string {
+  return s
+    .replace(/(authorization\s*:\s*)(bearer\s+)?[A-Za-z0-9._\-+/=]+/gi, '$1[redacted]')
+    .replace(/\bbearer\s+[A-Za-z0-9._\-+/=]+/gi, 'bearer [redacted]')
+    .replace(/\b(api[_-]?token|access[_-]?token|api[_-]?key)"?\s*[:=]\s*"?[A-Za-z0-9._\-+/=]+"?/gi, '$1=[redacted]')
+    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, '[redacted-token]');
+}
+
 export async function cf<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${env.COOLIFY_BASE_URL}/api/v1${path}`, {
     ...init,
@@ -12,7 +23,8 @@ export async function cf<T>(path: string, init: RequestInit = {}): Promise<T> {
     cache: 'no-store',
   });
   if (!res.ok) {
-    throw new Error(`Coolify ${path} → ${res.status} ${await res.text()}`);
+    const body = await res.text();
+    throw new Error(`Coolify ${path} → ${res.status} ${redactSecrets(body)}`);
   }
   return (await res.json()) as T;
 }
@@ -108,7 +120,7 @@ export async function waitForDeploy(
       const s = (last.status || '').toLowerCase();
       if (['finished', 'success', 'succeeded'].includes(s)) return last;
       if (['failed', 'cancelled', 'canceled', 'error'].includes(s)) {
-        throw new Error(`Deploy ${s}: ${last.logs ?? ''}`);
+        throw new Error(`Deploy ${s}: ${redactSecrets(last.logs ?? '')}`);
       }
     } catch (e) {
       // transient — retry

@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { env } from '@/server/env';
 import { prisma } from '@/server/db/client';
+import { redactSecrets } from './coolify';
 import type { BundleFile } from './bundler';
 
 export const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
@@ -66,7 +67,7 @@ export async function ensureDeployRepo(siteId: string, siteSlug: string): Promis
       names: [SITECRAFT_REPO_MARKER],
     });
   } catch (err) {
-    console.error('[github] failed to tag repo with marker topic', err);
+    console.error('[github] failed to tag repo with marker topic', redactSecrets(String(err)));
   }
   void existing;
   return {

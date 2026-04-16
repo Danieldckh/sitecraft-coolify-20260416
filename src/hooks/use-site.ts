@@ -1,8 +1,16 @@
 'use client';
 
+import { useCallback, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { SiteDTO, PageDTO } from '@/types/models';
+import type {
+  SiteDTO,
+  PageDTO,
+  ThemeDTO,
+  AssetDTO,
+  ConversationDTO,
+} from '@/types/models';
 import type { StylePreset } from '@/server/ai/stylePresets';
+import { useEditorStore, type StreamingState } from '@/stores/editor';
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, {
@@ -160,4 +168,285 @@ export function useDeletePage(siteId: string) {
     mutationFn: (id: string) => j(`/api/pages/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pages', siteId] }),
   });
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────
+
+export function useTheme(siteId: string) {
+  return useQuery({
+    queryKey: ['theme', siteId],
+    queryFn: async () => {
+      const r = await fetch(`/api/sites/${siteId}/theme`);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const body = (await r.json()) as { theme: ThemeDTO };
+      return body.theme;
+    },
+    enabled: !!siteId,
+  });
+}
+
+export function useGenerateTheme(siteId: string) {
+  const qc = useQueryClient();
+  const setThemeStreaming = useEditorStore((s) => s.setThemeStreaming);
+  return useMutation({
+    mutationFn: async () => {
+      setThemeStreaming(true);
+      try {
+        const r = await fetch(`/api/sites/${siteId}/theme/generate`, { method: 'POST' });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        const body = (await r.json()) as { theme: ThemeDTO };
+        return body.theme;
+      } finally {
+        setThemeStreaming(false);
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['theme', siteId] });
+    },
+  });
+}
+
+export function usePatchTheme(siteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Partial<ThemeDTO>) =>
+      j<{ theme: ThemeDTO }>(`/api/sites/${siteId}/theme`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['theme', siteId] }),
+  });
+}
+
+// ─── Assets ───────────────────────────────────────────────────────────────
+
+export function useAssets(siteId: string) {
+  return useQuery({
+    queryKey: ['assets', siteId],
+    queryFn: async () => {
+      const r = await fetch(`/api/sites/${siteId}/assets`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const body = (await r.json()) as { assets: AssetDTO[] };
+      return body.assets;
+    },
+    enabled: !!siteId,
+  });
+}
+
+export function useUploadAsset(siteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file, kind }: { file: File; kind?: AssetDTO['kind'] }) => {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (kind) fd.append('kind', kind);
+      const r = await fetch(`/api/sites/${siteId}/assets`, { method: 'POST', body: fd });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const body = (await r.json()) as { asset: AssetDTO };
+      return body.asset;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets', siteId] }),
+  });
+}
+
+// ─── Clarifier conversation ───────────────────────────────────────────────
+
+export function useConversation(siteId: string) {
+  const ask = useMutation({
+    mutationFn: ({
+      scope,
+      targetId,
+      scopeBrief,
+    }: {
+      scope: 'site' | 'page' | 'element';
+      targetId: string;
+      scopeBrief?: string;
+    }) =>
+      j<{ conversation: ConversationDTO }>(`/api/sites/${siteId}/conversations`, {
+        method: 'POST',
+        body: JSON.stringify({ scope, targetId, scopeBrief }),
+      }).then((b) => b.conversation),
+  });
+
+  const answer = useMutation({
+    mutationFn: ({
+      cid,
+      answers,
+    }: {
+      cid: string;
+      answers: Array<{ questionId: string; response?: string; responseAssetId?: string }>;
+    }) =>
+      j<{ conversation: ConversationDTO }>(`/api/sites/${siteId}/conversations/${cid}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ answers }),
+      }).then((b) => b.conversation),
+  });
+
+  return { ask, answer };
+}
+
+// ─── Page generation SSE ──────────────────────────────────────────────────
+
+interface PageGenerateLocalState {
+  status: 'idle' | 'streaming' | 'ready' | 'error';
+  tokens: number;
+  violations: string[];
+  error: string | null;
+  currentSection: string | null;
+}
+
+export function useGeneratePage(pageId: string, siteId: string) {
+  const qc = useQueryClient();
+  const abortRef = useRef<AbortController | null>(null);
+  const setStreamingState = useEditorStore((s) => s.setStreamingState);
+  const setStreamingPageId = useEditorStore((s) => s.setStreamingPageId);
+  const [state, setState] = useState<PageGenerateLocalState>({
+    status: 'idle',
+    tokens: 0,
+    violations: [],
+    error: null,
+    currentSection: null,
+  });
+
+  const publish = useCallback(
+    (next: PageGenerateLocalState) => {
+      setState(next);
+      const mapped: StreamingState | null =
+        next.status === 'idle'
+          ? null
+          : {
+              pageId,
+              status: next.status,
+              tokensReceived: next.tokens,
+              violations: next.violations,
+              currentSection: next.currentSection,
+              error: next.error,
+            };
+      setStreamingState(mapped);
+      setStreamingPageId(next.status === 'streaming' ? pageId : null);
+    },
+    [pageId, setStreamingState, setStreamingPageId],
+  );
+
+  const start = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let local: PageGenerateLocalState = {
+      status: 'streaming',
+      tokens: 0,
+      violations: [],
+      error: null,
+      currentSection: null,
+    };
+    publish(local);
+
+    try {
+      const r = await fetch(`/api/pages/${pageId}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+        signal: ac.signal,
+      });
+      if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      // Parse SSE frames. Events are either `data: …\n\n` (default event)
+      // or `event: NAME\ndata: …\n\n`.
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          if (!frame.trim()) continue;
+          let eventName = 'message';
+          const dataLines: string[] = [];
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+          }
+          const dataRaw = dataLines.join('\n');
+          let payload: unknown = null;
+          if (dataRaw) {
+            try {
+              payload = JSON.parse(dataRaw);
+            } catch {
+              payload = dataRaw;
+            }
+          }
+
+          if (eventName === 'message') {
+            // default `data: {delta:"..."}` frame from generate route.
+            const delta =
+              payload && typeof payload === 'object' && 'delta' in payload
+                ? String((payload as { delta: unknown }).delta ?? '')
+                : typeof payload === 'string'
+                  ? payload
+                  : '';
+            if (delta) {
+              local = { ...local, tokens: local.tokens + Math.max(1, Math.ceil(delta.length / 4)) };
+              // Heuristic: extract section name hint if present.
+              const m = /<section[^>]*data-section="([^"]+)"/i.exec(delta);
+              if (m) local = { ...local, currentSection: m[1] };
+              publish(local);
+            }
+          } else if (eventName === 'final') {
+            if (payload && typeof payload === 'object' && 'sections' in payload) {
+              const n = (payload as { sections: number }).sections;
+              local = { ...local, currentSection: `${n} sections` };
+              publish(local);
+            }
+          } else if (eventName === 'violation') {
+            const phrases =
+              payload && typeof payload === 'object' && 'phrases' in payload
+                ? ((payload as { phrases: string[] }).phrases ?? [])
+                : [];
+            local = { ...local, violations: [...local.violations, ...phrases] };
+            publish(local);
+          } else if (eventName === 'error') {
+            const message =
+              payload && typeof payload === 'object' && 'message' in payload
+                ? String((payload as { message: unknown }).message)
+                : 'Generation failed';
+            local = { ...local, status: 'error', error: message };
+            publish(local);
+          } else if (eventName === 'done') {
+            local = { ...local, status: 'ready' };
+            publish(local);
+          }
+        }
+      }
+
+      if (local.status === 'streaming') {
+        local = { ...local, status: 'ready' };
+        publish(local);
+      }
+
+      await qc.invalidateQueries({ queryKey: ['pages', siteId] });
+      await qc.invalidateQueries({ queryKey: ['page', pageId] });
+    } catch (e: unknown) {
+      if (ac.signal.aborted) {
+        publish({ ...local, status: 'idle' });
+        return;
+      }
+      const message = e instanceof Error ? e.message : 'Generation failed';
+      publish({ ...local, status: 'error', error: message });
+    } finally {
+      if (abortRef.current === ac) abortRef.current = null;
+    }
+  }, [pageId, siteId, publish, qc]);
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
+  return { start, stop, state };
 }

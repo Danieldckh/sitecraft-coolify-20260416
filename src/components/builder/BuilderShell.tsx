@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Skeleton, SkeletonText } from '@/components/common/SkeletonLoader';
+import { BuildTab } from '@/components/builder/BuildTab/BuildTab';
 import { useSite, usePatchSite, useStylePresets } from '@/hooks/use-site';
 import { useEditorStore, type EditorTab } from '@/stores/editor';
 import { cn } from '@/lib/cn';
@@ -73,8 +74,8 @@ export function BuilderShell({ siteId }: { siteId: string }) {
         <div className="flex min-h-0 flex-1">
           <SiteRail siteId={siteId} />
           <main className="min-w-0 flex-1 overflow-auto">
-            <TabsContent value="build" className="m-0 p-6">
-              <BuildTabStub />
+            <TabsContent value="build" className="m-0 p-0">
+              <BuildTab siteId={siteId} />
             </TabsContent>
             <TabsContent value="preview" className="m-0 p-6">
               <PreviewTabStub />
@@ -370,16 +371,6 @@ function StubCard({
         </Card>
       </div>
     </div>
-  );
-}
-
-function BuildTabStub() {
-  return (
-    <StubCard
-      milestone="M4"
-      title="Build"
-      subtitle="Pick pages, write per-page prompts, answer clarifying questions, stream generation."
-    />
   );
 }
 

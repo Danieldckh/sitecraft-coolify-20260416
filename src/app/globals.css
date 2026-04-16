@@ -1,18 +1,95 @@
+@import '../styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  html, body { @apply h-full bg-paper text-ink antialiased; }
-  body { font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11'; }
+  html, body { height: 100%; }
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-size: var(--fs-base);
+    line-height: var(--lh-normal);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--ring-focus);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+
+  *:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: var(--color-brand-200);
+    color: var(--color-neutral-900);
+  }
 }
 
 @layer components {
-  .card { @apply rounded-xl border border-black/5 bg-paper-raised shadow-sm; }
+  /* Legacy v1 utilities — kept so pre-Phase-2 files still compile. */
+  .card { @apply rounded-xl border shadow-sm; border-color: var(--border-subtle); background-color: var(--bg-raised); }
   .btn { @apply inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition; }
-  .btn-primary { @apply btn bg-ink text-paper hover:bg-ink-soft; }
-  .btn-ghost { @apply btn hover:bg-black/5; }
-  .btn-accent { @apply btn bg-accent text-white hover:opacity-90; }
-  .input { @apply w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20; }
-  .textarea { @apply input min-h-[90px] font-mono; }
+  .btn-primary { @apply btn; background-color: var(--btn-bg); color: var(--btn-fg); }
+  .btn-primary:hover { background-color: var(--btn-bg-hover); }
+  .btn-ghost { @apply btn; }
+  .btn-ghost:hover { background-color: var(--state-hover); }
+  .btn-accent { @apply btn; background-color: var(--bg-accent); color: var(--text-inverse); }
+  .input {
+    width: 100%;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--input-border);
+    background-color: var(--input-bg);
+    padding: 0.5rem 0.75rem;
+    font-size: var(--fs-base);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color var(--duration-150) var(--ease-out), box-shadow var(--duration-150) var(--ease-out);
+  }
+  .input:focus { border-color: var(--ring-focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring-focus) 20%, transparent); }
+  .textarea { @apply input; min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+}
+
+@layer utilities {
+  /* Radix-driven open/close transitions (no tailwindcss-animate needed). */
+  [data-state='open'].sc-fade,
+  [data-state='delayed-open'].sc-fade { animation: sc-fade-in var(--duration-150) var(--ease-out); }
+  [data-state='closed'].sc-fade       { animation: sc-fade-out var(--duration-150) var(--ease-out); }
+
+  [data-state='open'].sc-pop,
+  [data-state='delayed-open'].sc-pop  { animation: sc-pop-in var(--duration-150) var(--ease-out); }
+  [data-state='closed'].sc-pop        { animation: sc-pop-out var(--duration-150) var(--ease-out); }
+
+  @keyframes sc-fade-in  { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes sc-fade-out { from { opacity: 1 } to { opacity: 0 } }
+  @keyframes sc-pop-in {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+  @keyframes sc-pop-out {
+    from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    to   { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  }
+
+  .sc-shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--bg-sunken) 0%,
+      var(--state-hover) 50%,
+      var(--bg-sunken) 100%
+    );
+    background-size: 200% 100%;
+    animation: sc-shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes sc-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 }

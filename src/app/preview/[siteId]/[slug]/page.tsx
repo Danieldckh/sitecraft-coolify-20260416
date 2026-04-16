@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/server/db/client';
-import { toPageDTO, toThemeDTO } from '@/server/db/mappers';
-import { buildPreviewDoc } from '@/components/builder/PreviewTab/buildPreviewDoc';
+import { toPageDTO, toSiteDTO, toThemeDTO } from '@/server/db/mappers';
+import { buildFullSiteDoc } from '@/components/builder/PreviewTab/buildFullSiteDoc';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,46 +17,29 @@ export default async function StandalonePreviewPage({
 }) {
   const { siteId, slug } = await params;
 
-  const [page, theme] = await Promise.all([
-    prisma.page.findFirst({ where: { siteId, slug } }),
+  const [site, pages, theme] = await Promise.all([
+    prisma.site.findUnique({ where: { id: siteId } }),
+    prisma.page.findMany({ where: { siteId }, orderBy: { orderIdx: 'asc' } }),
     prisma.theme.findUnique({ where: { siteId } }),
   ]);
 
-  if (!page || !theme) notFound();
+  if (!site || !theme || pages.length === 0) notFound();
+  if (!pages.some((p) => p.slug === slug)) notFound();
 
-  const pageDto = toPageDTO(page);
+  const siteDto = toSiteDTO(site);
   const themeDto = toThemeDTO(theme);
+  const pageDtos = pages.map(toPageDTO);
 
-  if (!pageDto.pageHtml?.trim()) {
-    return (
-      <main
-        style={{
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          fontFamily: 'system-ui, sans-serif',
-          color: '#333',
-          padding: '2rem',
-          textAlign: 'center',
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
-            This page hasn&rsquo;t been generated yet
-          </h1>
-          <p style={{ marginTop: '0.5rem', color: '#666' }}>
-            Go back to the builder and generate {pageDto.name} from the Build
-            tab.
-          </p>
-        </div>
-      </main>
-    );
-  }
+  const html = buildFullSiteDoc({
+    site: siteDto,
+    theme: themeDto,
+    pages: pageDtos,
+    currentSlug: slug,
+  });
 
-  const html = buildPreviewDoc({ page: pageDto, theme: themeDto });
   return (
     <iframe
-      title={`${pageDto.name} preview`}
+      title={`${siteDto.name} preview`}
       srcDoc={html}
       sandbox="allow-scripts"
       style={{

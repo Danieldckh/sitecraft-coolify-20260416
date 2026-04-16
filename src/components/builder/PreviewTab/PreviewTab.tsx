@@ -15,10 +15,10 @@ import {
 } from '@/components/ui/Select';
 import { Label } from '@/components/ui/Label';
 import { cn } from '@/lib/cn';
-import { usePages, useTheme } from '@/hooks/use-site';
+import { usePages, useSite, useTheme } from '@/hooks/use-site';
 import { useEditorStore } from '@/stores/editor';
 import type { PageDTO } from '@/types/models';
-import { buildPreviewDoc } from './buildPreviewDoc';
+import { buildFullSiteDoc } from './buildFullSiteDoc';
 
 type Viewport = 'desktop' | 'tablet' | 'mobile';
 
@@ -29,6 +29,7 @@ const VIEWPORTS: Record<Viewport, { label: string; width: number; icon: typeof M
 };
 
 export function PreviewTab({ siteId }: { siteId: string }) {
+  const { data: site } = useSite(siteId);
   const { data: pages, isLoading: pagesLoading } = usePages(siteId);
   const { data: theme, isLoading: themeLoading } = useTheme(siteId);
   const storePageId = useEditorStore((s) => s.selectedPageId);
@@ -44,11 +45,18 @@ export function PreviewTab({ siteId }: { siteId: string }) {
   const [refreshKey, setRefreshKey] = useState(0);
 
   const srcDoc = useMemo(() => {
-    if (!theme || !activePage || !activePage.pageHtml) return null;
-    return buildPreviewDoc({ page: activePage, theme });
+    if (!theme || !pages || pages.length === 0 || !activePage) return null;
+    return buildFullSiteDoc({
+      site: { name: site?.name ?? 'Preview' },
+      theme,
+      pages,
+      currentSlug: activePage.slug,
+    });
     // refreshKey intentionally included to allow manual refresh.
+    // activePage is intentionally excluded: slug switches are posted into
+    // the iframe, not rebuilt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme, activePage, refreshKey]);
+  }, [theme, pages, site?.name, refreshKey]);
 
   // ─── Empty states ─────────────────────────────────────────────────
   if (themeLoading || pagesLoading) {
@@ -104,8 +112,6 @@ export function PreviewTab({ siteId }: { siteId: string }) {
       </div>
     );
   }
-
-  const needsGeneration = !activePage?.pageHtml?.trim();
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-6">
@@ -188,33 +194,26 @@ export function PreviewTab({ siteId }: { siteId: string }) {
         </Link>
       </div>
 
-      <p className="-mt-2 text-[11px] text-[var(--text-muted)]">
-        Full site navigation across pages — coming soon.
-      </p>
+      <div className="-mt-2 text-[11px] text-[var(--text-muted)]">
+        <span>Home</span>
+        <span className="mx-1.5">›</span>
+        <span>
+          Currently viewing:{' '}
+          <span className="text-[var(--text-secondary)]">{activePage?.name ?? ''}</span>
+        </span>
+      </div>
 
-      {/* Iframe surface */}
-      {needsGeneration ? (
-        <Card className="mx-auto w-full max-w-xl">
-          <CardBody className="space-y-3 py-8 text-center">
-            <div className="text-base font-semibold text-[var(--text-primary)]">
-              Page not yet generated
-            </div>
-            <p className="text-sm text-[var(--text-secondary)]">
-              Generate this page from the Build tab to see it here.
-            </p>
-            <div className="flex justify-center">
-              <Button
-                onClick={() => setTab('build')}
-                leftIcon={<Sparkles className="h-3.5 w-3.5" aria-hidden />}
-              >
-                Go to Build
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-      ) : (
-        <PreviewFrame srcDoc={srcDoc ?? ''} width={VIEWPORTS[viewport].width} pageName={activePage?.name ?? ''} />
-      )}
+      <PreviewFrame
+        key={refreshKey}
+        srcDoc={srcDoc ?? ''}
+        width={VIEWPORTS[viewport].width}
+        siteName={site?.name ?? 'Preview'}
+        activeSlug={activePage?.slug ?? ''}
+        onNavigate={(slug) => {
+          const match = pages.find((p) => p.slug === slug);
+          if (match) setSelectedPageId(match.id);
+        }}
+      />
     </div>
   );
 }
@@ -222,17 +221,38 @@ export function PreviewTab({ siteId }: { siteId: string }) {
 function PreviewFrame({
   srcDoc,
   width,
-  pageName,
+  siteName,
+  activeSlug,
+  onNavigate,
 }: {
   srcDoc: string;
   width: number;
-  pageName: string;
+  siteName: string;
+  activeSlug: string;
+  onNavigate: (slug: string) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  // Rebuild srcDoc via key change when input changes.
+
+  // Listen for navigation messages from the iframe.
   useEffect(() => {
-    // no-op; iframe re-renders on srcDoc change
-  }, [srcDoc]);
+    function onMessage(ev: MessageEvent) {
+      if (ev.source !== frameRef.current?.contentWindow) return;
+      const d = ev.data;
+      if (d && d.type === 'sc-navigate' && typeof d.slug === 'string') {
+        onNavigate(d.slug);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onNavigate]);
+
+  // Post navigation into the iframe when the parent selection changes.
+  useEffect(() => {
+    if (!activeSlug) return;
+    const win = frameRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ type: 'sc-navigate', slug: activeSlug }, '*');
+  }, [activeSlug, srcDoc]);
 
   return (
     <div
@@ -244,7 +264,7 @@ function PreviewFrame({
     >
       <iframe
         ref={frameRef}
-        title={`Preview of ${pageName}`}
+        title={`Preview of ${siteName}`}
         sandbox="allow-scripts"
         srcDoc={srcDoc}
         className="h-full w-full flex-1 border-0 bg-white"

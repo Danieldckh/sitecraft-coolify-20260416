@@ -20,7 +20,52 @@ interface PageTab {
   name: string;
 }
 
+type HostStatus =
+  | 'idle'
+  | 'queued'
+  | 'bundling'
+  | 'pushing'
+  | 'deploying'
+  | 'probing'
+  | 'live'
+  | 'failed';
+
+interface HostState {
+  status: HostStatus;
+  url: string | null;
+  message: string | null;
+}
+
 const HOME_SLUG = 'home';
+
+const HOST_BUSY_STATES: ReadonlySet<HostStatus> = new Set([
+  'queued',
+  'bundling',
+  'pushing',
+  'deploying',
+  'probing',
+]);
+
+function hostStatusLabel(status: HostStatus): string {
+  switch (status) {
+    case 'queued':
+      return 'Queued';
+    case 'bundling':
+      return 'Bundling';
+    case 'pushing':
+      return 'Pushing';
+    case 'deploying':
+      return 'Deploying';
+    case 'probing':
+      return 'Probing';
+    case 'live':
+      return 'Live';
+    case 'failed':
+      return 'Failed';
+    default:
+      return '';
+  }
+}
 
 const HOVER_STYLE = `
 /* Injected by Sitecraft editor */
@@ -123,18 +168,45 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
     [activeSlug],
   );
 
-  // If ?building=1 is still set, poll the preview while the build completes.
+  // Since builds now run detached from the client connection, any visit to
+  // /site/[id] may land on a site that's still under construction. Poll the
+  // sites API — if this site is still building, bump the iframe nonce so new
+  // sections appear as they finish. Stop once build completes (or after 10
+  // minutes as a safety net).
   useEffect(() => {
-    if (!building) return;
-    const interval = setInterval(() => {
-      setIframeNonce(Date.now());
-    }, 1500);
-    const stop = setTimeout(() => clearInterval(interval), 60_000);
-    return () => {
-      clearInterval(interval);
-      clearTimeout(stop);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const deadline = Date.now() + 10 * 60_000;
+
+    const tick = async (): Promise<void> => {
+      if (cancelled || Date.now() > deadline) return;
+      try {
+        const res = await fetch('/api/sites', { cache: 'no-store' });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            sites?: { id: string; build?: { inProgress?: boolean } }[];
+          };
+          const me = data.sites?.find((s) => s.id === siteId);
+          if (me?.build?.inProgress) {
+            setIframeNonce(Date.now());
+            timer = setTimeout(tick, 3000);
+            return;
+          }
+          // One more refresh so the final state lands, then stop.
+          setIframeNonce(Date.now());
+        }
+      } catch {
+        // Transient network — try again shortly.
+        if (!cancelled) timer = setTimeout(tick, 5000);
+      }
     };
-  }, [building]);
+
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [siteId]);
 
   // Wire up click-to-edit + hover styles inside the iframe whenever it loads.
   const handleIframeLoad = useCallback(() => {

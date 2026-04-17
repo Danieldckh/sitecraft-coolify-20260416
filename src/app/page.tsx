@@ -35,6 +35,22 @@ interface PlanShape {
   }>;
 }
 
+interface SiteListDeployment {
+  url: string | null;
+  status: string;
+  updatedAt: string;
+}
+
+interface SiteListItem {
+  id: string;
+  name: string;
+  sitePrompt: string;
+  createdAt: string;
+  updatedAt: string;
+  deployment: SiteListDeployment | null;
+  build?: { pagesPlanned: number; pagesReady: number; inProgress: boolean };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -69,6 +85,10 @@ export default function Landing() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
+  // Sites grid (idle state only).
+  const [sites, setSites] = useState<SiteListItem[]>([]);
+  const [sitesLoaded, setSitesLoaded] = useState(false);
+
   const trimmedLength = prompt.trim().length;
   const canSubmit = phase !== 'building' && trimmedLength >= MIN_PROMPT_LENGTH;
 
@@ -80,6 +100,80 @@ export default function Landing() {
     return () => {
       abortRef.current?.abort();
     };
+  }, []);
+
+  // Load the sites list on mount + poll every 4s while any site is building
+  // in the background. That way when a user returns to the menu mid-build,
+  // the progress counter in the grid keeps ticking without a manual refresh.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/sites', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Failed to load sites (${res.status})`);
+        const data = (await res.json()) as { sites?: SiteListItem[] };
+        if (cancelled) return;
+        const list = Array.isArray(data.sites) ? data.sites : [];
+        setSites(list);
+        setSitesLoaded(true);
+
+        const anyBuilding = list.some((s) => s.build?.inProgress);
+        if (anyBuilding && !cancelled) {
+          timer = setTimeout(tick, 4000);
+        }
+      } catch {
+        if (!cancelled) {
+          setSites([]);
+          setSitesLoaded(true);
+        }
+      }
+    };
+
+    void tick();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  const handleOpenSite = useCallback(
+    (id: string) => {
+      router.push(`/site/${id}`);
+    },
+    [router],
+  );
+
+  const handleDeleteSite = useCallback(async (id: string) => {
+    // Optimistic removal — restore on failure.
+    let removed: SiteListItem | null = null;
+    setSites((prev) => {
+      const next: SiteListItem[] = [];
+      for (const s of prev) {
+        if (s.id === id) {
+          removed = s;
+          continue;
+        }
+        next.push(s);
+      }
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/sites/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+    } catch {
+      if (removed) {
+        const restored: SiteListItem = removed;
+        setSites((prev) => {
+          const next = prev.slice();
+          next.push(restored);
+          next.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+          return next;
+        });
+      }
+    }
   }, []);
 
   // Auto-grow the textarea between 3 and ~8 rows.
@@ -555,7 +649,7 @@ export default function Landing() {
     <main className="relative min-h-screen w-full bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
       <Wordmark />
 
-      <section className="mx-auto flex min-h-screen max-w-[680px] flex-col items-stretch justify-center px-6 py-24">
+      <section className="mx-auto flex w-full max-w-[680px] flex-col items-stretch px-6 pb-16 pt-24 md:pt-32">
         <form onSubmit={handleSubmit} className="flex flex-col gap-10">
           <h1 className="font-display text-[44px] leading-[1.05] tracking-[-0.01em] text-[color:var(--sc-ink)] md:text-[56px]">
             Describe a website. Agents will build it.
@@ -571,6 +665,13 @@ export default function Landing() {
           />
         </form>
       </section>
+
+      <SitesGrid
+        sites={sites}
+        loaded={sitesLoaded}
+        onOpen={handleOpenSite}
+        onDelete={handleDeleteSite}
+      />
     </main>
   );
 }
@@ -672,7 +773,7 @@ function BuildingView({
   onCancel,
 }: BuildingViewProps) {
   return (
-    <main className="relative flex h-screen w-screen flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
+    <main className="relative flex h-screen w-full overflow-x-hidden flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center justify-between px-8">
         <span className="font-display text-[18px] leading-none tracking-[-0.005em] text-[color:var(--sc-ink)]">
@@ -980,4 +1081,184 @@ function ErrorView({
       </div>
     </main>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sites grid (idle state)                                                    */
+/* -------------------------------------------------------------------------- */
+
+function SitesGrid({
+  sites,
+  loaded,
+  onOpen,
+  onDelete,
+}: {
+  sites: SiteListItem[];
+  loaded: boolean;
+  onOpen: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (!loaded) return null;
+
+  if (sites.length === 0) {
+    return (
+      <section className="mx-auto w-full max-w-[1024px] px-6 pb-24">
+        <p className="text-[12.5px] text-[color:var(--sc-muted)]">
+          No sites yet — describe one above to get started.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mx-auto w-full max-w-[1024px] px-6 pb-24">
+      <div className="mb-4 flex items-center">
+        <span className="text-[10.5px] font-medium uppercase tracking-[0.16em] text-[color:var(--sc-muted)]">
+          Your sites
+        </span>
+      </div>
+      <div
+        className="grid gap-4"
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+      >
+        {sites.map((s) => (
+          <SiteCard
+            key={s.id}
+            site={s}
+            onOpen={() => onOpen(s.id)}
+            onDelete={() => onDelete(s.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SiteCard({
+  site,
+  onOpen,
+  onDelete,
+}: {
+  site: SiteListItem;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const isLive = site.deployment?.status === 'live';
+  const isBuilding = site.build?.inProgress === true;
+  const built = site.build?.pagesReady ?? 0;
+  const planned = site.build?.pagesPlanned ?? 0;
+
+  return (
+    <article
+      className="sc-soft-shadow flex flex-col rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] p-5 transition-colors hover:border-[color:var(--sc-border-strong)]"
+    >
+      <header className="flex items-center gap-2">
+        <span
+          aria-hidden
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${isBuilding ? 'sc-pulse-dot' : ''}`}
+          style={{
+            backgroundColor: isBuilding
+              ? 'var(--sc-accent)'
+              : isLive
+                ? 'var(--sc-success)'
+                : 'var(--sc-muted-2)',
+          }}
+          title={isBuilding ? 'Building…' : isLive ? 'Live' : 'Not hosted'}
+        />
+        <h3
+          className="min-w-0 truncate text-[15px] font-semibold tracking-[-0.005em] text-[color:var(--sc-ink)]"
+          title={site.name}
+        >
+          {site.name}
+        </h3>
+        {isBuilding ? (
+          <span className="ml-auto shrink-0 text-[11px] text-[color:var(--sc-muted)]">
+            Building {built}/{planned}
+          </span>
+        ) : null}
+      </header>
+
+      <p
+        className="mt-2 text-[13px] leading-relaxed text-[color:var(--sc-muted)]"
+        style={{
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {site.sitePrompt || 'No description'}
+      </p>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <time
+          className="shrink-0 text-[11.5px] text-[color:var(--sc-muted-2)]"
+          dateTime={site.updatedAt}
+        >
+          {formatRelative(site.updatedAt)}
+        </time>
+        <div className="flex items-center gap-2">
+          {confirming ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirming(false);
+                  onDelete();
+                }}
+                className="text-[12px] font-medium text-[color:var(--sc-danger)] transition-opacity hover:opacity-80"
+              >
+                Confirm delete?
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="text-[12px] text-[color:var(--sc-muted)] transition-colors hover:text-[color:var(--sc-ink)]"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onOpen}
+                className="inline-flex items-center justify-center rounded-[8px] bg-[color:var(--sc-accent)] px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
+              >
+                Open
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                className="text-[12px] text-[color:var(--sc-muted)] transition-colors hover:text-[color:var(--sc-ink)]"
+              >
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** Plain-English relative time. No external dep. */
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const now = Date.now();
+  const sec = Math.max(0, Math.round((now - then) / 1000));
+  if (sec < 5) return 'just now';
+  if (sec < 60) return `${sec} seconds ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return min === 1 ? '1 minute ago' : `${min} minutes ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return hr === 1 ? '1 hour ago' : `${hr} hours ago`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return day === 1 ? '1 day ago' : `${day} days ago`;
+  const mo = Math.round(day / 30);
+  if (mo < 12) return mo === 1 ? '1 month ago' : `${mo} months ago`;
+  const yr = Math.round(mo / 12);
+  return yr === 1 ? '1 year ago' : `${yr} years ago`;
 }

@@ -87,19 +87,25 @@ export async function POST(req: NextRequest) {
   }
 
   const encoder = new TextEncoder();
-  const abortController = new AbortController();
 
-  // If the client disconnects, propagate through our AbortController so the
-  // generator (and any inflight Anthropic calls it owns) can wind down.
-  req.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+  // Background build: we DO NOT link the client's req.signal to the generator.
+  // If the user navigates away, the orchestrator keeps running and writing
+  // sections to the DB — they can come back via the sites grid or /site/[id]
+  // and see the finished site whenever it's done.
+  //
+  // Client disconnects just close the SSE stream; `controller.enqueue` throws
+  // silently on a closed controller (we catch it) and the generator loop keeps
+  // iterating to persist every remaining section before returning.
+  let clientConnected = true;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enqueue = (event: string, data: unknown): void => {
+        if (!clientConnected) return;
         try {
           controller.enqueue(encoder.encode(sseFrame(event, data)));
         } catch {
-          // Controller already closed — ignore.
+          clientConnected = false;
         }
       };
 
@@ -114,14 +120,6 @@ export async function POST(req: NextRequest) {
         const generator = buildSite(prompt);
 
         for await (const evt of generator as AsyncGenerator<BuildEvent>) {
-          if (abortController.signal.aborted) {
-            try {
-              await generator.return?.(undefined);
-            } catch {
-              /* ignore */
-            }
-            break;
-          }
 
           if (evt.type === 'plan') {
             plan = evt.plan;
@@ -280,11 +278,13 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Generator returned without emitting `done` (e.g. client abort).
-        if (!abortController.signal.aborted) {
-          enqueue('done', {});
+        // Generator finished cleanly.
+        enqueue('done', {});
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
         }
-        controller.close();
       } catch (err) {
         console.error('[api/build] stream error', err);
         enqueue('error', { message: 'Build failed' });
@@ -296,7 +296,10 @@ export async function POST(req: NextRequest) {
       }
     },
     cancel() {
-      abortController.abort();
+      // Client closed the SSE connection — mark so enqueue() stops trying,
+      // but keep the generator running to finish persisting sections in the
+      // background. The user can resume via /site/[id] or /api/continue.
+      clientConnected = false;
     },
   });
 

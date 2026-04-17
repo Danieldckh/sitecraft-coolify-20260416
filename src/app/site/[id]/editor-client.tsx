@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Download, Loader2 } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { Inspector, type SelectedElement } from './inspector';
 
 interface EditorClientProps {
@@ -81,7 +81,8 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
         }
         const data = await res.json();
         if (cancelled) return;
-        const name = typeof data?.name === 'string' ? data.name : 'Untitled site';
+        const name =
+          typeof data?.name === 'string' ? data.name : 'Untitled site';
         const id = typeof data?.id === 'string' ? data.id : siteId;
         setSite({ id, name });
       } catch (err) {
@@ -95,6 +96,13 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       cancelled = true;
     };
   }, [siteId]);
+
+  // Auto-clear inspector success state after 1.5s.
+  useEffect(() => {
+    if (!applySuccess) return;
+    const t = setTimeout(() => setApplySuccess(false), 1500);
+    return () => clearTimeout(t);
+  }, [applySuccess]);
 
   const reloadIframe = useCallback(() => {
     setIframeNonce(Date.now());
@@ -137,8 +145,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
     try {
       doc = iframe.contentDocument;
     } catch {
-      // Same-origin error — cannot introspect the document. Fall back
-      // gracefully to whatever tabs we already have.
       setIframeReady(true);
       return;
     }
@@ -146,8 +152,7 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
 
     setIframeReady(true);
 
-    // Enumerate the page nav links the iframe is rendering. Every page includes
-    // a header-nav with relative anchors like `./home`, `./about`, etc.
+    // Discover page nav links in the iframe.
     try {
       const anchors = Array.from(
         doc.querySelectorAll('a[href^="./"]'),
@@ -156,7 +161,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       const discovered: PageTab[] = [];
       for (const a of anchors) {
         const raw = a.getAttribute('href') || '';
-        // Strip leading "./" and any trailing slash / query / hash.
         const slug = raw
           .replace(/^\.\//, '')
           .replace(/[/?#].*$/, '')
@@ -169,8 +173,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
         discovered.push({ slug, name: label });
       }
       if (discovered.length > 0) {
-        // Ensure the current active slug is in the list even if it didn't
-        // appear in the nav (preview may still be materialising).
         if (!seen.has(activeSlug)) {
           discovered.unshift({
             slug: activeSlug,
@@ -181,7 +183,7 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
         setPages(discovered);
       }
     } catch {
-      // Ignore and keep existing pages list.
+      /* keep existing pages list */
     }
 
     if (!doc.getElementById('sc-editor-hover-style')) {
@@ -191,8 +193,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       doc.head.appendChild(style);
     }
 
-    // Backfill data-role from the element's first className if missing,
-    // so the hover label has something to show.
     doc.querySelectorAll('[data-el-id]').forEach((el) => {
       const node = el as HTMLElement;
       if (!node.getAttribute('data-role')) {
@@ -204,7 +204,9 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
     if (selected) {
       const prev = doc.querySelector('.sc-selected');
       if (prev) prev.classList.remove('sc-selected');
-      const match = doc.querySelector(`[data-el-id="${cssEscape(selected.id)}"]`);
+      const match = doc.querySelector(
+        `[data-el-id="${cssEscape(selected.id)}"]`,
+      );
       if (match) match.classList.add('sc-selected');
     }
 
@@ -235,13 +237,10 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       const anchor = target?.closest('a') as HTMLAnchorElement | null;
       if (!anchor) return;
       const href = anchor.getAttribute('href') || '';
-      // External links: block navigation inside the iframe.
       if (href.startsWith('http')) {
         e.preventDefault();
         return;
       }
-      // Internal page nav: intercept and update the active tab instead of
-      // letting the iframe navigate on its own.
       if (href.startsWith('./')) {
         const slug = href
           .replace(/^\.\//, '')
@@ -294,7 +293,7 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
         // Small delay so the user registers the success state before reload.
         setTimeout(() => {
           reloadIframe();
-        }, 350);
+        }, 400);
       } catch (err) {
         setApplyError(err instanceof Error ? err.message : 'Edit failed');
       } finally {
@@ -321,91 +320,83 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
   return (
     <div className="flex h-screen w-screen flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
       {/* Top bar */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 md:px-5">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-5">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/"
-            aria-label="Back to Sitecraft home"
+            aria-label="Back"
             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <span aria-hidden className="h-4 w-px bg-[color:var(--sc-border-strong)]" />
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="inline-block h-4 w-4 rounded-[4px] bg-[color:var(--sc-ink)] shadow-[inset_0_-2px_0_rgba(255,255,255,0.12)]"
-            />
-            <span className="text-[13px] font-medium tracking-tight text-[color:var(--sc-ink)]">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="font-display text-[17px] leading-none tracking-[-0.005em] text-[color:var(--sc-ink)]">
               Sitecraft
             </span>
-          </div>
-          <span aria-hidden className="h-4 w-px bg-[color:var(--sc-border-strong)]" />
-          <div className="flex min-w-0 items-center gap-2">
+            <span
+              aria-hidden
+              className="text-[13px] text-[color:var(--sc-muted-2)]"
+            >
+              ·
+            </span>
             <span className="truncate text-[13px] text-[color:var(--sc-ink-2)]">
-              {displayName ?? (
-                <span className="inline-flex items-center gap-1.5 text-[color:var(--sc-muted)]">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading…
-                </span>
-              )}
+              {displayName ?? 'Loading…'}
             </span>
             {building ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--sc-muted)]">
-                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              <span className="ml-1 inline-flex items-center rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-2 py-0.5 text-[10.5px] font-medium text-[color:var(--sc-muted)]">
                 Building
               </span>
             ) : null}
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <a
             href={`/api/export/${siteId}`}
             download
-            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3 py-1.5 text-[12px] font-medium text-[color:var(--sc-ink-2)] shadow-[0_1px_0_rgba(23,23,26,0.03)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
+            className="inline-flex items-center justify-center rounded-[10px] bg-[color:var(--sc-accent)] px-3.5 py-1.5 text-[12.5px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
           >
-            <Download className="h-3.5 w-3.5" />
             Export ZIP
           </a>
         </div>
       </header>
 
+      {/* Page tabs row */}
+      <div className="h-10 shrink-0 border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
+        <EditorPageTabs
+          pages={pages}
+          activeSlug={activeSlug}
+          onChange={handleTabChange}
+        />
+      </div>
+
       {/* Split view */}
       <div className="flex min-h-0 flex-1">
-        {/* Preview pane (~72%) */}
-        <section className="flex min-w-0 flex-[72] items-stretch bg-[color:var(--sc-bg)] p-4 md:p-5">
-          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[color:var(--sc-border)] bg-white shadow-[0_1px_0_rgba(23,23,26,0.04),0_24px_60px_-28px_rgba(23,23,26,0.22)]">
-            <EditorPageTabs
-              pages={pages}
-              activeSlug={activeSlug}
-              onChange={handleTabChange}
+        {/* Preview pane (~70%) */}
+        <section className="flex min-w-0 flex-[7] items-stretch bg-[color:var(--sc-bg)] p-5">
+          <div className="sc-soft-shadow relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-white">
+            <iframe
+              ref={iframeRef}
+              key={`${activeSlug}-${iframeNonce}`}
+              src={`/preview/${siteId}/${activeSlug}?_=${iframeNonce}`}
+              onLoad={handleIframeLoad}
+              title="Site preview"
+              className={`h-full w-full border-0 bg-white transition-opacity duration-300 ${
+                iframeReady ? 'opacity-100' : 'opacity-0'
+              }`}
             />
-            <div className="relative flex-1 overflow-hidden bg-white">
-              <iframe
-                ref={iframeRef}
-                key={`${activeSlug}-${iframeNonce}`}
-                src={`/preview/${siteId}/${activeSlug}?_=${iframeNonce}`}
-                onLoad={handleIframeLoad}
-                title="Site preview"
-                className={`h-full w-full border-0 bg-white transition-opacity duration-300 ${
-                  iframeReady ? 'opacity-100' : 'opacity-0'
-                }`}
-              />
-              {!iframeReady ? (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color:var(--sc-panel-2)]">
-                  <div className="flex items-center gap-2 rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3 py-1 text-[11px] text-[color:var(--sc-muted)]">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading preview…
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            {!iframeReady ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color:var(--sc-panel-2)]">
+                <span className="text-[12px] text-[color:var(--sc-muted)]">
+                  Loading preview…
+                </span>
+              </div>
+            ) : null}
           </div>
         </section>
 
-        {/* Inspector pane (~28%) */}
-        <aside className="flex w-0 flex-[28] min-w-[320px] flex-col border-l border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
+        {/* Inspector pane (~30%) */}
+        <aside className="flex w-[360px] shrink-0 flex-col border-l border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
           <Inspector
             selected={selected}
             pageSlug={activeSlug}
@@ -434,7 +425,7 @@ function EditorPageTabs({
     <div
       role="tablist"
       aria-label="Pages"
-      className="flex shrink-0 items-end overflow-x-auto border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-2"
+      className="flex h-full items-end overflow-x-auto px-4"
     >
       {pages.map((p) => {
         const active = p.slug === activeSlug;
@@ -445,10 +436,10 @@ function EditorPageTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(p.slug)}
-            className={`relative -mb-px shrink-0 border-b-2 px-3 py-2 text-[12px] font-medium transition-colors ${
+            className={`relative -mb-px shrink-0 border-b-2 px-3 py-2 text-[12.5px] transition-colors ${
               active
-                ? 'border-[color:var(--sc-ink)] text-[color:var(--sc-ink)]'
-                : 'border-transparent text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
+                ? 'border-[color:var(--sc-ink)] font-medium text-[color:var(--sc-ink)]'
+                : 'border-transparent font-normal text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
             }`}
           >
             {p.name}

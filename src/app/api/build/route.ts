@@ -25,6 +25,7 @@ import { enforceRateLimit } from '@/server/rateLimit';
 import { buildSite, type BuildEvent } from '@/server/ai/orchestrator';
 import type { SitePlan } from '@/server/ai/architect';
 import { injectElementIds } from '@/server/html/augment';
+import { assemblePageHtml } from '@/server/html/template';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,67 +33,6 @@ export const dynamic = 'force-dynamic';
 const BuildBody = z.object({
   prompt: z.string().min(10).max(8000),
 });
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Assemble one page's full HTML document from its ordered section HTML.
- *
- * Nav links rendered by "header-nav"/"footer" sections use relative
- * `./{slug}` hrefs. In the in-iframe preview (`/preview/[id]/[slug]`) those
- * resolve to sibling pages at `/preview/[id]/{slug}`. The export route
- * rewrites them to `./{slug}.html` for the standalone zip.
- */
-function assemblePageHtml(
-  plan: SitePlan,
-  currentPage: SitePlan['pages'][number],
-  sections: { html: string }[],
-): string {
-  const sectionHtml = sections.map((s) => s.html).join('\n');
-  const displayFont = plan.typography.displayFont;
-  const bodyFont = plan.typography.bodyFont;
-  const pageTitle =
-    currentPage.slug === 'home'
-      ? plan.siteName
-      : `${currentPage.name} — ${plan.siteName}`;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(pageTitle)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(displayFont)}:wght@400;600;700&family=${encodeURIComponent(bodyFont)}:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-:root {
-  --c-primary: ${plan.palette.primary};
-  --c-secondary: ${plan.palette.secondary};
-  --c-accent: ${plan.palette.accent};
-  --c-ink: ${plan.palette.ink};
-  --c-surface: ${plan.palette.surface};
-  --f-display: "${displayFont}", serif;
-  --f-body: "${bodyFont}", sans-serif;
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: var(--c-surface); color: var(--c-ink); font-family: var(--f-body); }
-h1, h2, h3, h4 { font-family: var(--f-display); margin: 0; }
-img { max-width: 100%; display: block; }
-a { color: inherit; }
-</style>
-</head>
-<body>
-${sectionHtml}
-</body>
-</html>`;
-}
 
 // Small SSE helper — formats a single event frame.
 function sseFrame(event: string, data: unknown): string {
@@ -186,9 +126,16 @@ export async function POST(req: NextRequest) {
           if (evt.type === 'plan') {
             plan = evt.plan;
             try {
+              // Persist the plan alongside the site name so the Continue
+              // flow (/api/continue) can resume from the next unfinished
+              // section without re-running the Architect. JSON.stringify on
+              // the validated SitePlan is safe — no cycles, no functions.
               await prisma.site.update({
                 where: { id: siteId },
-                data: { name: plan.siteName },
+                data: {
+                  name: plan.siteName,
+                  planJson: JSON.stringify(plan),
+                },
               });
               await prisma.theme.upsert({
                 where: { siteId },

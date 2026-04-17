@@ -19,7 +19,7 @@ const instrumentSerif = Instrument_Serif({
 
 export const metadata: Metadata = {
   title: 'Sitecraft',
-  description: 'Describe a website. Agents build it.',
+  description: 'Describe a website. Agents will build it.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

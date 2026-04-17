@@ -11,6 +11,7 @@ model Site {
   id             String   @id @default(cuid())
   name           String
   sitePrompt     String   @default("")
+  planJson       String   @default("")
   stylePresetId  String?
   domain         String?
   locked         Boolean  @default(false)

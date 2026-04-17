@@ -28,6 +28,10 @@
   --sc-success: #2f7a4f;
   --sc-danger: #b2372b;
 
+  /* Geometry */
+  --sc-radius-card: 18px;        /* prompt card / preview card */
+  --sc-radius-md: 10px;          /* inputs, small cards */
+
   /* Fonts (provided by next/font in layout.tsx) */
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-display: 'Instrument Serif', 'Fraunces', ui-serif, Georgia, 'Times New Roman', serif;
@@ -105,6 +109,21 @@
     font-family: var(--font-mono);
   }
 
+  /* A soft, editorial shadow. One layer, diffuse, low opacity — so cards
+   * read as resting on the surface rather than floating off of it. */
+  .sc-soft-shadow {
+    box-shadow:
+      0 1px 0 rgba(23, 23, 26, 0.03),
+      0 6px 20px -12px rgba(23, 23, 26, 0.18);
+  }
+
+  /* A slightly deeper variant for the preview card during builds. */
+  .sc-soft-shadow-lg {
+    box-shadow:
+      0 1px 0 rgba(23, 23, 26, 0.03),
+      0 18px 40px -24px rgba(23, 23, 26, 0.22);
+  }
+
   /* Soft fade-in used by the live preview as it hydrates. */
   @keyframes sc-fade-in {
     from {
@@ -143,10 +162,23 @@
     animation: sc-indet 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
   }
 
-  /* A faint dotted grid used under the landing — editorial, not techy. */
+  /* A faint dotted grid used under the landing — editorial, not techy.
+   * (No longer used by page.tsx after the simplification, but kept so we
+   * don't break any other consumer that may still reference it.) */
   .sc-paper {
     background-image:
       radial-gradient(circle at 1px 1px, rgba(23, 23, 26, 0.045) 1px, transparent 0);
     background-size: 22px 22px;
+  }
+
+  /* A brief success pulse used when an inspector edit lands. */
+  @keyframes sc-success-flash {
+    0%   { opacity: 0; transform: translateY(2px); }
+    20%  { opacity: 1; transform: translateY(0); }
+    80%  { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-2px); }
+  }
+  .sc-success-flash {
+    animation: sc-success-flash 1500ms ease-out forwards;
   }
 }

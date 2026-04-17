@@ -103,145 +103,141 @@ function isKebabCase(v: unknown): v is string {
   return typeof v === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v);
 }
 
+// Fallback palette + typography so a malformed plan still produces a usable site.
+const FALLBACK_PALETTE = {
+  primary: '#17171a',
+  secondary: '#3a3a3f',
+  accent: '#c55a2a',
+  ink: '#17171a',
+  surface: '#faf8f4',
+};
+const FALLBACK_TYPOGRAPHY = { displayFont: 'Fraunces', bodyFont: 'Inter' };
+
+function coerceString(v: unknown, fallback: string): string {
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t.length > 0) return t;
+  }
+  return fallback;
+}
+
+function slugify(v: unknown, fallback: string): string {
+  const s = (typeof v === 'string' ? v : '').toLowerCase().trim();
+  const kebab = s
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return kebab.length > 0 ? kebab : fallback;
+}
+
+function dedupeSlug(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 100; i += 1) {
+    const candidate = `${base}-${i}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function humanize(slug: string): string {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function normalizeSection(raw: unknown, idx: number, taken: Set<string>): SitePlan['pages'][number]['sections'][number] {
+  const sec = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const id = dedupeSlug(slugify(sec.id, `section-${idx + 1}`), taken);
+  taken.add(id);
+  const role = coerceString(sec.role, 'custom');
+  const brief = coerceString(sec.brief, `A ${role} section.`);
+  return { id, role, brief };
+}
+
+function normalizePage(raw: unknown, idx: number, takenPageSlugs: Set<string>): SitePlan['pages'][number] {
+  const page = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const slug = dedupeSlug(slugify(page.slug, `page-${idx + 1}`), takenPageSlugs);
+  takenPageSlugs.add(slug);
+  const name = coerceString(page.name, humanize(slug));
+  const brief = coerceString(page.brief, `Main content for the ${name} page.`);
+
+  const rawSections = Array.isArray(page.sections) ? (page.sections as unknown[]) : [];
+  const trimmedSections = rawSections.length > 12 ? rawSections.slice(0, 12) : rawSections;
+
+  const sectionIds = new Set<string>();
+  let sections = trimmedSections.map((s, j) => normalizeSection(s, j, sectionIds));
+
+  if (sections.length === 0) {
+    sections = [
+      { id: 'hero', role: 'hero', brief: `A welcoming hero for the ${name} page.` },
+      { id: 'footer', role: 'footer', brief: 'Simple footer.' },
+    ];
+  }
+
+  return { slug, name, brief, sections };
+}
+
+/**
+ * Normalize any JSON blob from the Architect into a valid SitePlan.
+ *
+ * Philosophy: NEVER throw for recoverable weirdness. Missing/malformed fields
+ * are backfilled from sensible defaults so the build keeps moving. The only
+ * hard guarantees:
+ *   - at least one page
+ *   - each page has at least one section
+ *   - first page slug === "home"
+ */
 function validatePlan(parsed: unknown): SitePlan {
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Architect returned non-object JSON.');
-  }
-  const obj = parsed as Record<string, unknown>;
+  const obj = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
 
-  const siteName = obj.siteName;
-  if (typeof siteName !== 'string' || siteName.trim().length === 0) {
-    throw new Error('Architect plan missing valid "siteName".');
-  }
+  const siteName = coerceString(obj.siteName, 'Untitled Site');
 
-  const palette = obj.palette;
-  if (!palette || typeof palette !== 'object') {
-    throw new Error('Architect plan missing "palette" object.');
-  }
-  const p = palette as Record<string, unknown>;
-  for (const key of ['primary', 'secondary', 'accent', 'ink', 'surface'] as const) {
-    if (!isHexColor(p[key])) {
-      throw new Error(`Architect plan palette.${key} is not a hex color.`);
-    }
-  }
-
-  const typography = obj.typography;
-  if (!typography || typeof typography !== 'object') {
-    throw new Error('Architect plan missing "typography" object.');
-  }
-  const t = typography as Record<string, unknown>;
-  if (typeof t.displayFont !== 'string' || t.displayFont.trim().length === 0) {
-    throw new Error('Architect plan typography.displayFont missing.');
-  }
-  if (typeof t.bodyFont !== 'string' || t.bodyFont.trim().length === 0) {
-    throw new Error('Architect plan typography.bodyFont missing.');
-  }
-
-  const pages = obj.pages;
-  if (!Array.isArray(pages) || pages.length < 1) {
-    throw new Error(
-      `Architect plan "pages" must be a non-empty array (got ${Array.isArray(pages) ? pages.length : 'non-array'}).`,
-    );
-  }
-  if (pages.length > 6) {
-    throw new Error(
-      `Architect plan "pages" must be 3–6 entries (got ${pages.length}).`,
-    );
-  }
-
-  const seenSlugs = new Set<string>();
-  const validatedPages = pages.map((pg, i) => {
-    if (!pg || typeof pg !== 'object') {
-      throw new Error(`Architect plan pages[${i}] is not an object.`);
-    }
-    const page = pg as Record<string, unknown>;
-
-    if (!isKebabCase(page.slug)) {
-      throw new Error(`Architect plan pages[${i}].slug is not kebab-case.`);
-    }
-    if (seenSlugs.has(page.slug)) {
-      throw new Error(`Architect plan pages[${i}].slug "${page.slug}" is duplicated.`);
-    }
-    seenSlugs.add(page.slug);
-
-    if (i === 0 && page.slug !== 'home') {
-      throw new Error(
-        `Architect plan must have pages[0].slug === "home" (got "${page.slug}").`,
-      );
-    }
-
-    if (typeof page.name !== 'string' || page.name.trim().length === 0) {
-      throw new Error(`Architect plan pages[${i}].name missing.`);
-    }
-    if (typeof page.brief !== 'string' || page.brief.trim().length === 0) {
-      throw new Error(`Architect plan pages[${i}].brief missing.`);
-    }
-
-    const sections = page.sections;
-    if (!Array.isArray(sections) || sections.length < 1) {
-      throw new Error(
-        `Architect plan pages[${i}].sections must be a non-empty array.`,
-      );
-    }
-    if (sections.length > 8) {
-      throw new Error(
-        `Architect plan pages[${i}].sections has ${sections.length} entries (max ~6).`,
-      );
-    }
-
-    const seenSectionIds = new Set<string>();
-    const validatedSections = sections.map((s, j) => {
-      if (!s || typeof s !== 'object') {
-        throw new Error(`Architect plan pages[${i}].sections[${j}] is not an object.`);
-      }
-      const sec = s as Record<string, unknown>;
-      if (!isKebabCase(sec.id)) {
-        throw new Error(
-          `Architect plan pages[${i}].sections[${j}].id is not kebab-case.`,
-        );
-      }
-      if (seenSectionIds.has(sec.id)) {
-        throw new Error(
-          `Architect plan pages[${i}].sections[${j}].id "${sec.id}" is duplicated within page "${page.slug}".`,
-        );
-      }
-      seenSectionIds.add(sec.id);
-      if (typeof sec.role !== 'string' || sec.role.trim().length === 0) {
-        throw new Error(
-          `Architect plan pages[${i}].sections[${j}].role missing.`,
-        );
-      }
-      if (typeof sec.brief !== 'string' || sec.brief.trim().length === 0) {
-        throw new Error(
-          `Architect plan pages[${i}].sections[${j}].brief missing.`,
-        );
-      }
-      return { id: sec.id, role: sec.role, brief: sec.brief };
-    });
-
-    return {
-      slug: page.slug,
-      name: (page.name as string).trim(),
-      brief: (page.brief as string).trim(),
-      sections: validatedSections,
-    };
-  });
-
-  return {
-    siteName: siteName.trim(),
-    palette: {
-      primary: (p.primary as string).trim(),
-      secondary: (p.secondary as string).trim(),
-      accent: (p.accent as string).trim(),
-      ink: (p.ink as string).trim(),
-      surface: (p.surface as string).trim(),
-    },
-    typography: {
-      displayFont: (t.displayFont as string).trim(),
-      bodyFont: (t.bodyFont as string).trim(),
-    },
-    pages: validatedPages,
+  const rawPalette = (obj.palette && typeof obj.palette === 'object' ? obj.palette : {}) as Record<string, unknown>;
+  const palette = {
+    primary: isHexColor(rawPalette.primary) ? (rawPalette.primary as string).trim() : FALLBACK_PALETTE.primary,
+    secondary: isHexColor(rawPalette.secondary) ? (rawPalette.secondary as string).trim() : FALLBACK_PALETTE.secondary,
+    accent: isHexColor(rawPalette.accent) ? (rawPalette.accent as string).trim() : FALLBACK_PALETTE.accent,
+    ink: isHexColor(rawPalette.ink) ? (rawPalette.ink as string).trim() : FALLBACK_PALETTE.ink,
+    surface: isHexColor(rawPalette.surface) ? (rawPalette.surface as string).trim() : FALLBACK_PALETTE.surface,
   };
+
+  const rawTypo = (obj.typography && typeof obj.typography === 'object' ? obj.typography : {}) as Record<string, unknown>;
+  const typography = {
+    displayFont: coerceString(rawTypo.displayFont, FALLBACK_TYPOGRAPHY.displayFont),
+    bodyFont: coerceString(rawTypo.bodyFont, FALLBACK_TYPOGRAPHY.bodyFont),
+  };
+
+  const rawPagesInput = Array.isArray(obj.pages) ? (obj.pages as unknown[]) : [];
+  const rawPages = rawPagesInput.length > 8 ? rawPagesInput.slice(0, 8) : rawPagesInput;
+
+  const takenSlugs = new Set<string>();
+  const validatedPages = rawPages.map((pg, i) => normalizePage(pg, i, takenSlugs));
+
+  if (validatedPages.length === 0) {
+    validatedPages.push({
+      slug: 'home',
+      name: 'Home',
+      brief: 'Main landing page.',
+      sections: [
+        { id: 'hero', role: 'hero', brief: 'A welcoming hero introducing the site.' },
+        { id: 'footer', role: 'footer', brief: 'Simple footer with contact info.' },
+      ],
+    });
+  }
+
+  if (validatedPages[0].slug !== 'home') {
+    const existingHomeIdx = validatedPages.findIndex((p) => p.slug === 'home');
+    if (existingHomeIdx > 0) {
+      const [home] = validatedPages.splice(existingHomeIdx, 1);
+      validatedPages.unshift(home);
+    } else {
+      validatedPages[0] = { ...validatedPages[0], slug: 'home' };
+    }
+  }
+
+  return { siteName, palette, typography, pages: validatedPages };
 }
 
 export async function planSite(userPrompt: string): Promise<SitePlan> {

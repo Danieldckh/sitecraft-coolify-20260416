@@ -9,3 +9,5 @@ public/uploads
 .playwright-mcp
 tsconfig.tsbuildinfo
 *.png
+.claude/
+prisma/dev.db

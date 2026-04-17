@@ -78,13 +78,14 @@ model Element {
   prompt        String   @default("")
   html          String   @default("")
   css           String   @default("")
+  orderIdx      Int      @default(0)
   locked        Boolean  @default(false)
   lastEditedAt  DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([pageId, selectorId])
-  @@index([pageId])
+  @@index([pageId, orderIdx])
 }
 
 model Asset {

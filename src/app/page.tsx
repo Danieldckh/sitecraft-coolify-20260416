@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Paperclip, X } from 'lucide-react';
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -51,6 +52,24 @@ interface SiteListItem {
   build?: { pagesPlanned: number; pagesReady: number; inProgress: boolean };
 }
 
+/**
+ * Minimal QA issue shape — kept local so the landing doesn't import from the
+ * server. Agent 5 emits a `qa` SSE event near the end of the build; this is
+ * the payload we render into a one-line summary beneath the build log.
+ */
+interface QaIssue {
+  severity: 'error' | 'warn' | 'info';
+  kind: string;
+  message: string;
+  pageSlug?: string;
+  elementId?: string;
+}
+
+interface Attachment {
+  url: string;
+  name: string;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -71,6 +90,11 @@ export default function Landing() {
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  // Reference attachments the user attaches via the paperclip. These are
+  // uploaded eagerly on pick; on submit their URLs are prepended into the
+  // prompt as a hint for the Architect.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+
   // Build-phase state (preserved across 'error' so Continue can resume)
   const [siteId, setSiteId] = useState<string | null>(null);
   const [siteName, setSiteName] = useState<string | null>(null);
@@ -80,6 +104,7 @@ export default function Landing() {
   const [statusText, setStatusText] = useState('Planning…');
   const [iframeNonce, setIframeNonce] = useState<number | null>(null);
   const [done, setDone] = useState(false);
+  const [qaIssues, setQaIssues] = useState<QaIssue[] | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -92,6 +117,11 @@ export default function Landing() {
 
   const trimmedLength = prompt.trim().length;
   const canSubmit = phase !== 'building' && trimmedLength >= MIN_PROMPT_LENGTH;
+
+  // Silence unused-warning: siteName is written by the plan handler and read
+  // by the editor-navigation effect via siteId. We keep it in state so any
+  // future header chrome can display it without plumbing changes.
+  void siteName;
 
   /* -------------------------------------------------- */
   /* Effects                                            */
@@ -191,7 +221,7 @@ export default function Landing() {
     const el = logRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [sections, statusText, done]);
+  }, [sections, statusText, done, qaIssues]);
 
   // Navigate into the editor after a short beat once `done` fires.
   useEffect(() => {
@@ -230,6 +260,36 @@ export default function Landing() {
     setStatusText('Planning…');
     setIframeNonce(null);
     setDone(false);
+    setQaIssues(null);
+  }, []);
+
+  /* -------------------------------------------------- */
+  /* Attachments                                        */
+  /* -------------------------------------------------- */
+
+  const handleAttach = useCallback(async (file: File): Promise<string> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/uploads', { method: 'POST', body: form });
+    if (!res.ok) {
+      let msg = `Upload failed (${res.status})`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === 'string') msg = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    const body = (await res.json()) as { url?: string };
+    if (!body.url) throw new Error('Upload returned no url');
+    const entry: Attachment = { url: body.url, name: file.name };
+    setAttachments((prev) => [...prev, entry]);
+    return body.url;
+  }, []);
+
+  const handleRemoveAttachment = useCallback((url: string) => {
+    setAttachments((prev) => prev.filter((a) => a.url !== url));
   }, []);
 
   /* -------------------------------------------------- */
@@ -432,6 +492,18 @@ export default function Landing() {
           break;
         }
 
+        case 'qa': {
+          // Agent 5 emits this after `done` with a list of QA issues
+          // gathered from the static scan + Haiku review. We just render a
+          // one-line summary; the editor page surfaces the details.
+          const obj =
+            data && typeof data === 'object'
+              ? (data as { issues?: QaIssue[] })
+              : ({} as { issues?: QaIssue[] });
+          setQaIssues(Array.isArray(obj.issues) ? obj.issues : []);
+          break;
+        }
+
         default:
           break;
       }
@@ -499,10 +571,21 @@ export default function Landing() {
       setStatusText('Planning…');
       setIframeNonce(null);
       setDone(false);
+      setQaIssues(null);
       setPhase('building');
 
       const controller = new AbortController();
       abortRef.current = controller;
+
+      // If the user attached reference files, prepend them into the prompt so
+      // the Architect can honor them (most often: "use this as the logo").
+      const attachedUrls = attachments.map((a) => a.url);
+      const promptPayload = (() => {
+        const base = prompt.trim();
+        if (attachedUrls.length === 0) return base;
+        const urlList = attachedUrls.join(', ');
+        return `[User attached: ${urlList}]\nUse any attached image as the site's logo or brand mark.\n\n${base}`;
+      })();
 
       // Perform the initial POST /api/build. Network errors or non-OK responses
       // here short-circuit straight to the error view (no retry — the build
@@ -512,7 +595,7 @@ export default function Landing() {
         initialRes = await fetch('/api/build', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt.trim() }),
+          body: JSON.stringify({ prompt: promptPayload }),
           signal: controller.signal,
         });
       } catch (err) {
@@ -619,7 +702,7 @@ export default function Landing() {
       setError(lastErr instanceof Error ? lastErr.message : 'Stream error');
       setPhase('error');
     },
-    [canSubmit, prompt, consumeStream],
+    [canSubmit, prompt, consumeStream, attachments],
   );
 
   /* -------------------------------------------------- */
@@ -710,6 +793,7 @@ export default function Landing() {
         progress={progress}
         iframeNonce={iframeNonce}
         done={done}
+        qaIssues={qaIssues}
         logRef={logRef}
         onCancel={resetToIdle}
       />
@@ -727,14 +811,14 @@ export default function Landing() {
     );
   }
 
-  // idle
+  // idle — centered hero, prompt card, sites grid below.
   return (
-    <main className="relative min-h-screen w-full bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
+    <main className="relative flex min-h-screen w-full flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
       <Wordmark />
 
-      <section className="mx-auto flex w-full max-w-[680px] flex-col items-stretch px-6 pb-16 pt-24 md:pt-32">
+      <section className="mx-auto flex w-full max-w-[680px] grow flex-col items-stretch justify-center px-6 pt-24 pb-16 md:pt-28">
         <form onSubmit={handleSubmit} className="flex flex-col gap-10">
-          <h1 className="font-display text-[44px] leading-[1.05] tracking-[-0.01em] text-[color:var(--sc-ink)] md:text-[56px]">
+          <h1 className="max-w-[680px] self-center text-center font-display text-[44px] leading-[1.06] tracking-[-0.01em] text-[color:var(--sc-ink)] md:text-[56px]">
             Describe a website. Agents will build it.
           </h1>
 
@@ -745,6 +829,9 @@ export default function Landing() {
             onSubmit={handleSubmit}
             canSubmit={canSubmit}
             placeholder={PLACEHOLDER}
+            onAttach={handleAttach}
+            attachments={attachments}
+            onRemoveAttachment={handleRemoveAttachment}
           />
         </form>
       </section>
@@ -763,6 +850,24 @@ export default function Landing() {
 /* Prompt card                                                                */
 /* -------------------------------------------------------------------------- */
 
+interface PromptCardProps {
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (v: string) => void;
+  onSubmit: () => void;
+  canSubmit: boolean;
+  placeholder: string;
+  /**
+   * Uploads a file and returns its public URL. Wired by the parent to hit
+   * POST /api/uploads. Returning a promise lets the child await the upload
+   * before clearing its `<input type="file">` value.
+   */
+  onAttach?: (file: File) => Promise<string>;
+  /** Current list of uploaded reference attachments (controlled). */
+  attachments: Attachment[];
+  onRemoveAttachment: (url: string) => void;
+}
+
 function PromptCard({
   textareaRef,
   value,
@@ -770,43 +875,139 @@ function PromptCard({
   onSubmit,
   canSubmit,
   placeholder,
-}: {
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-  value: string;
-  onChange: (v: string) => void;
-  onSubmit: () => void;
-  canSubmit: boolean;
-  placeholder: string;
-}) {
+  onAttach,
+  attachments,
+  onRemoveAttachment,
+}: PromptCardProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handlePickFile = useCallback(() => {
+    setUploadError(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input immediately so re-picking the same file still fires.
+      e.target.value = '';
+      if (!file || !onAttach) return;
+      setUploading(true);
+      setUploadError(null);
+      try {
+        await onAttach(file);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      } finally {
+        setUploading(false);
+      }
+    },
+    [onAttach],
+  );
+
   return (
     <div
-      className="sc-soft-shadow group flex flex-col overflow-hidden rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] transition-colors focus-within:border-[color:var(--sc-border-strong)]"
+      style={{ boxShadow: 'var(--sc-shadow-md)' }}
+      className="group flex flex-col overflow-hidden rounded-2xl border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] transition-colors focus-within:border-[color:var(--sc-border-strong)]"
     >
       <label htmlFor="sc-prompt" className="sr-only">
         Describe the site you want to build
       </label>
-      <textarea
-        id="sc-prompt"
-        ref={textareaRef}
-        autoFocus
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={3}
-        className="block w-full resize-none border-0 bg-transparent px-6 pt-5 pb-4 text-[16px] leading-[1.6] text-[color:var(--sc-ink)] placeholder:text-[color:var(--sc-muted-2)] focus:outline-none focus:ring-0"
-        style={{ minHeight: '110px' }}
-      />
-      <div className="flex items-center justify-end px-4 pb-4">
+
+      {/* Prompt body: paperclip at the left, textarea filling the rest. */}
+      <div className="flex items-start gap-2 px-4 pt-4">
+        <button
+          type="button"
+          onClick={handlePickFile}
+          disabled={uploading}
+          aria-label="Attach a reference image"
+          title="Attach a reference image (used as logo or brand mark)"
+          className="mt-[2px] inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)] disabled:opacity-50"
+        >
+          <Paperclip className="h-4 w-4" aria-hidden />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <textarea
+          id="sc-prompt"
+          ref={textareaRef}
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={3}
+          className="block w-full resize-none border-0 bg-transparent px-1 pb-2 pt-1 text-[16px] leading-[1.6] text-[color:var(--sc-ink)] placeholder:text-[color:var(--sc-muted-2)] focus:outline-none focus:ring-0"
+          style={{ minHeight: '96px', boxShadow: 'none' }}
+        />
+      </div>
+
+      {/* Footer: Build button. Attachment chip row tucks under the button. */}
+      <div className="flex items-start justify-between gap-3 px-4 pb-4 pt-1">
+        <div className="min-w-0 flex-1 text-[12px] text-[color:var(--sc-muted)]">
+          {uploading ? 'Uploading…' : uploadError ? (
+            <span className="text-[color:var(--sc-danger)]">{uploadError}</span>
+          ) : null}
+        </div>
         <button
           type="button"
           onClick={onSubmit}
           disabled={!canSubmit}
-          className="inline-flex items-center justify-center rounded-[10px] bg-[color:var(--sc-accent)] px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex shrink-0 items-center justify-center rounded-md bg-[color:var(--sc-accent)] px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           Build site
         </button>
       </div>
+
+      {attachments.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-4 py-2.5">
+          {attachments.map((a) => (
+            <AttachmentChip
+              key={a.url}
+              attachment={a}
+              onRemove={() => onRemoveAttachment(a.url)}
+            />
+          ))}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function AttachmentChip({
+  attachment,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex max-w-[260px] items-center gap-1.5 rounded-md border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] py-1 pl-1 pr-1.5 text-[12px] text-[color:var(--sc-ink-2)]">
+      <span
+        aria-hidden
+        className="h-4 w-4 shrink-0 overflow-hidden rounded-[3px] bg-[color:var(--sc-panel-2)]"
+        style={{
+          backgroundImage: `url(${attachment.url})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+        }}
+      />
+      <span className="truncate">{attachment.name}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${attachment.name}`}
+        className="ml-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
+      >
+        <X className="h-3 w-3" aria-hidden />
+      </button>
+    </span>
   );
 }
 
@@ -838,6 +1039,7 @@ interface BuildingViewProps {
   progress: number;
   iframeNonce: number | null;
   done: boolean;
+  qaIssues: QaIssue[] | null;
   logRef: React.RefObject<HTMLDivElement | null>;
   onCancel: () => void;
 }
@@ -852,6 +1054,7 @@ function BuildingView({
   progress,
   iframeNonce,
   done,
+  qaIssues,
   logRef,
   onCancel,
 }: BuildingViewProps) {
@@ -875,7 +1078,10 @@ function BuildingView({
       <div className="flex min-h-0 flex-1 flex-col gap-5 px-8 pb-8 md:flex-row">
         {/* Preview (70%) */}
         <section className="flex min-h-0 flex-[7] flex-col overflow-hidden">
-          <div className="sc-soft-shadow-lg relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-white">
+          <div
+            style={{ boxShadow: 'var(--sc-shadow-lg)' }}
+            className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[color:var(--sc-border)] bg-white"
+          >
             {/* Progress bar — thin, on the top edge of the card */}
             <div
               role="progressbar"
@@ -918,7 +1124,7 @@ function BuildingView({
         </section>
 
         {/* Build log (30%) */}
-        <aside className="flex min-h-[240px] w-full shrink-0 flex-col rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] md:w-[320px]">
+        <aside className="flex min-h-[240px] w-full shrink-0 flex-col rounded-2xl border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] md:w-[320px]">
           <div className="flex h-11 shrink-0 items-center border-b border-[color:var(--sc-border)] px-5">
             <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[color:var(--sc-muted)]">
               Build
@@ -946,6 +1152,8 @@ function BuildingView({
                     {statusText}
                   </div>
                 ) : null}
+                {done ? <DoneToastLine /> : null}
+                {qaIssues ? <QaSummary issues={qaIssues} /> : null}
               </>
             )}
           </div>
@@ -955,7 +1163,10 @@ function BuildingView({
       {/* "Build complete" toast */}
       {done ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
-          <div className="sc-fade-in rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 py-2 text-[12.5px] text-[color:var(--sc-ink-2)] shadow-[0_6px_20px_-12px_rgba(23,23,26,0.24)]">
+          <div
+            style={{ boxShadow: 'var(--sc-shadow-md)' }}
+            className="sc-fade-in rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 py-2 text-[12.5px] text-[color:var(--sc-ink-2)]"
+          >
             Build complete. Opening editor…
           </div>
         </div>
@@ -976,6 +1187,30 @@ function LogStatusRow({ text }: { text: string }) {
         className="h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--sc-ink)] opacity-70"
       />
       <span>{text}</span>
+    </div>
+  );
+}
+
+function DoneToastLine() {
+  return (
+    <div className="mt-3 text-[12.5px] text-[color:var(--sc-ink-2)]">
+      Site ready.
+    </div>
+  );
+}
+
+function QaSummary({ issues }: { issues: QaIssue[] }) {
+  const errors = issues.filter((i) => i.severity === 'error').length;
+  const warns = issues.filter((i) => i.severity === 'warn').length;
+  const clean = issues.length === 0;
+
+  return (
+    <div className="mt-1 text-[12px] text-[color:var(--sc-muted)]">
+      {clean
+        ? 'QA: no issues.'
+        : `QA: ${warns} ${warns === 1 ? 'warning' : 'warnings'}, ${errors} ${
+            errors === 1 ? 'error' : 'errors'
+          }.`}
     </div>
   );
 }
@@ -1068,7 +1303,7 @@ function PageTabs({
     <div
       role="tablist"
       aria-label="Pages"
-      className="flex shrink-0 items-end overflow-x-auto border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3"
+      className="flex shrink-0 items-end gap-0.5 overflow-x-auto border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3"
     >
       {pages.map((p) => {
         const active = p.slug === activeSlug;
@@ -1079,7 +1314,7 @@ function PageTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(p.slug)}
-            className={`relative -mb-px shrink-0 border-b-2 px-3 py-2 text-[12.5px] transition-colors ${
+            className={`relative -mb-px shrink-0 border-b-2 px-2.5 py-1.5 text-[12px] transition-colors ${
               active
                 ? 'border-[color:var(--sc-ink)] font-medium text-[color:var(--sc-ink)]'
                 : 'border-transparent font-normal text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
@@ -1134,7 +1369,10 @@ function ErrorView({
       </div>
 
       <div className="mx-auto flex min-h-screen max-w-[560px] flex-col items-stretch justify-center px-6 py-24">
-        <div className="sc-soft-shadow rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] p-8">
+        <div
+          style={{ boxShadow: 'var(--sc-shadow-md)' }}
+          className="rounded-2xl border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] p-8"
+        >
           <h2 className="font-display text-[32px] leading-[1.1] tracking-[-0.01em] text-[color:var(--sc-ink)]">
             Something broke mid-build.
           </h2>
@@ -1147,7 +1385,7 @@ function ErrorView({
               <button
                 type="button"
                 onClick={onContinue}
-                className="inline-flex items-center justify-center rounded-[10px] bg-[color:var(--sc-accent)] px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
+                className="inline-flex items-center justify-center rounded-md bg-[color:var(--sc-accent)] px-4 py-2 text-[13.5px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
               >
                 Continue building
               </button>
@@ -1155,7 +1393,7 @@ function ErrorView({
             <button
               type="button"
               onClick={onReset}
-              className="inline-flex items-center justify-center rounded-[10px] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 py-2 text-[13.5px] font-medium text-[color:var(--sc-ink-2)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
+              className="inline-flex items-center justify-center rounded-md border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 py-2 text-[13.5px] font-medium text-[color:var(--sc-ink-2)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
             >
               Start over
             </button>
@@ -1202,7 +1440,7 @@ function SitesGrid({
       </div>
       <div
         className="grid gap-4"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
       >
         {sites.map((s) => (
           <SiteCard
@@ -1231,10 +1469,12 @@ function SiteCard({
   const isBuilding = site.build?.inProgress === true;
   const built = site.build?.pagesReady ?? 0;
   const planned = site.build?.pagesPlanned ?? 0;
+  const liveShort = shortUrl(site.deployment?.url ?? null);
 
   return (
     <article
-      className="sc-soft-shadow flex flex-col rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] p-5 transition-colors hover:border-[color:var(--sc-border-strong)]"
+      style={{ boxShadow: 'var(--sc-shadow-sm)' }}
+      className="flex flex-col rounded-xl border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] p-5 transition-colors hover:border-[color:var(--sc-border-strong)]"
     >
       <header className="flex items-center gap-2">
         <span
@@ -1258,6 +1498,13 @@ function SiteCard({
         {isBuilding ? (
           <span className="ml-auto shrink-0 text-[11px] text-[color:var(--sc-muted)]">
             Building {built}/{planned}
+          </span>
+        ) : isLive && liveShort ? (
+          <span
+            className="ml-auto max-w-[140px] shrink-0 truncate font-mono text-[11px] text-[color:var(--sc-muted)]"
+            title={site.deployment?.url ?? undefined}
+          >
+            {liveShort}
           </span>
         ) : null}
       </header>
@@ -1307,7 +1554,7 @@ function SiteCard({
               <button
                 type="button"
                 onClick={onOpen}
-                className="inline-flex items-center justify-center rounded-[8px] bg-[color:var(--sc-accent)] px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
+                className="inline-flex items-center justify-center rounded-md bg-[color:var(--sc-accent)] px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)]"
               >
                 Open
               </button>
@@ -1324,6 +1571,17 @@ function SiteCard({
       </div>
     </article>
   );
+}
+
+/** Short-form of a deployment URL for the sites grid (host, no scheme). */
+function shortUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.host + (u.pathname && u.pathname !== '/' ? u.pathname : '');
+  } catch {
+    return url.replace(/^https?:\/\//, '');
+  }
 }
 
 /** Plain-English relative time. No external dep. */

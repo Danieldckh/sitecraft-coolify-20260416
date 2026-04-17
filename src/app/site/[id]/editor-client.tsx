@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Hand, MousePointerClick } from 'lucide-react';
+import { ArrowLeft, Copy, Hand, MousePointerClick } from 'lucide-react';
 import {
   Inspector,
   type InspectMode,
@@ -765,15 +765,16 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
-      {/* Top bar */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-5">
+      {/* Top bar — 56px, hairline bottom, panel bg, balanced three-slot layout. */}
+      <header className="grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-5">
+        {/* Left slot: back arrow, wordmark, site name. */}
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/"
-            aria-label="Back"
+            aria-label="Back to sites"
             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4" aria-hidden />
           </Link>
           <div className="flex min-w-0 items-center gap-2">
             <span className="font-display text-[17px] leading-none tracking-[-0.005em] text-[color:var(--sc-ink)]">
@@ -796,65 +797,83 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Center slot: Inspect / Interact segmented control. */}
+        <div className="flex items-center justify-center">
           <InspectModeToggle
             value={inspectMode}
             onChange={handleInspectModeChange}
           />
+        </div>
+
+        {/* Right slot: Deploy. */}
+        <div className="flex items-center justify-end">
           <DeployButton state={hostState} onClick={handleDeployClick} />
         </div>
       </header>
 
-      {/* Page tabs row */}
-      <div className="h-10 shrink-0 border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
-        <EditorPageTabs
-          pages={pages}
-          activeSlug={activeSlug}
-          onChange={handleTabChange}
-        />
-      </div>
-
       {/* Split view */}
       <div className="flex min-h-0 flex-1">
-        {/* Preview pane (~70%) */}
-        <section className="flex min-w-0 flex-[7] items-stretch bg-[color:var(--sc-bg)] p-5">
-          <div className="sc-soft-shadow relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--sc-radius-card)] border border-[color:var(--sc-border)] bg-white">
+        {/* Preview pane — preview card holds live banner, page tabs, iframe. */}
+        <section className="flex min-w-0 flex-[72] items-stretch bg-[color:var(--sc-bg)] p-5">
+          <div
+            style={{ boxShadow: 'var(--sc-shadow-lg)' }}
+            className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[color:var(--sc-border)] bg-white"
+          >
             {hostState.status === 'live' && hostState.url ? (
               <LiveUrlBanner url={hostState.url} />
             ) : null}
-            <iframe
-              ref={iframeRef}
-              key={`${activeSlug}-${iframeNonce}`}
-              src={`/preview/${siteId}/${activeSlug}?_=${iframeNonce}`}
-              onLoad={handleIframeLoad}
-              title="Site preview"
-              className={`h-full w-full border-0 bg-white transition-opacity duration-300 ${
-                iframeReady ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
-            {!iframeReady ? (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color:var(--sc-panel-2)]">
-                <span className="text-[12px] text-[color:var(--sc-muted)]">
-                  Loading preview…
-                </span>
-              </div>
+            {pages.length > 0 ? (
+              <EditorPageTabs
+                pages={pages}
+                activeSlug={activeSlug}
+                onChange={handleTabChange}
+              />
             ) : null}
+            <div className="relative min-h-0 flex-1 overflow-hidden bg-white">
+              <iframe
+                ref={iframeRef}
+                key={`${activeSlug}-${iframeNonce}`}
+                src={`/preview/${siteId}/${activeSlug}?_=${iframeNonce}`}
+                onLoad={handleIframeLoad}
+                title="Site preview"
+                className={`h-full w-full border-0 bg-white transition-opacity duration-300 ${
+                  iframeReady ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              {!iframeReady ? (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color:var(--sc-panel-2)]">
+                  <span className="text-[12px] text-[color:var(--sc-muted)]">
+                    Loading preview…
+                  </span>
+                </div>
+              ) : null}
+            </div>
           </div>
         </section>
 
-        {/* Inspector pane (~30%) */}
-        <aside className="flex w-[360px] shrink-0 flex-col border-l border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
-          <Inspector
-            selected={selected}
-            pageSlug={activeSlug}
-            onClear={handleClearSelection}
-            onApply={handleApply}
-            busy={applying}
-            error={applyError}
-            success={applySuccess}
-            inspectMode={inspectMode}
-            onEnableInspect={() => handleInspectModeChange('inspect')}
-          />
+        {/* Inspector pane — ~28% width, hairline separator, matching header. */}
+        <aside className="flex w-[28%] min-w-[320px] max-w-[440px] shrink-0 flex-col border-l border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
+          <div className="flex h-14 shrink-0 items-center border-b border-[color:var(--sc-border)] px-5">
+            <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[color:var(--sc-muted)]">
+              Inspect
+            </span>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <Inspector
+              siteId={siteId}
+              selected={selected}
+              pageSlug={activeSlug}
+              onClear={handleClearSelection}
+              onApply={handleApply}
+              busy={applying}
+              error={applyError}
+              success={applySuccess}
+              inspectMode={inspectMode}
+              onEnableInspect={() => handleInspectModeChange('inspect')}
+              onAfterPatch={() => reloadIframe(true)}
+              onAfterRevise={() => reloadIframe(false)}
+            />
+          </div>
         </aside>
       </div>
     </div>
@@ -870,11 +889,13 @@ function EditorPageTabs({
   activeSlug: string;
   onChange: (slug: string) => void;
 }) {
+  // Tighter tab strip that lives inside the preview card header. Active tab
+  // carries a 2px underline in ink; inactive tabs are muted until hover.
   return (
     <div
       role="tablist"
       aria-label="Pages"
-      className="flex h-full items-end overflow-x-auto px-4"
+      className="flex h-9 shrink-0 items-end gap-0.5 overflow-x-auto border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4"
     >
       {pages.map((p) => {
         const active = p.slug === activeSlug;
@@ -885,10 +906,10 @@ function EditorPageTabs({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(p.slug)}
-            className={`relative -mb-px shrink-0 border-b-2 px-3 py-2 text-[12.5px] transition-colors ${
+            className={`relative -mb-px shrink-0 px-2.5 py-1.5 text-[12px] transition-colors ${
               active
-                ? 'border-[color:var(--sc-ink)] font-medium text-[color:var(--sc-ink)]'
-                : 'border-transparent font-normal text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
+                ? 'border-b-2 border-[color:var(--sc-ink)] font-medium text-[color:var(--sc-ink)]'
+                : 'border-b-2 border-transparent font-normal text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
             }`}
           >
             {p.name}
@@ -1017,10 +1038,40 @@ function DeployButton({
 /* -------------------------------------------------------------------------- */
 
 function LiveUrlBanner({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Fallback for environments without the async clipboard API.
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(ta);
+        }
+      }
+      setCopied(true);
+    } catch {
+      // Silent — best-effort copy. Users can still click the Open link.
+    }
+  }, [url]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+
   return (
-    <div
-      className="flex h-9 shrink-0 items-center justify-between gap-4 border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-4"
-    >
+    <div className="flex h-9 shrink-0 items-center justify-between gap-4 border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-4">
       <div className="flex min-w-0 items-center gap-2 text-[12px] text-[color:var(--sc-ink-2)]">
         <svg
           aria-hidden
@@ -1041,6 +1092,19 @@ function LiveUrlBanner({ url }: { url: string }) {
         <span className="truncate font-mono text-[12px] text-[color:var(--sc-ink)]">
           {url}
         </span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={copied ? 'Copied' : 'Copy URL'}
+          title={copied ? 'Copied' : 'Copy URL'}
+          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel)] hover:text-[color:var(--sc-ink)]"
+        >
+          {copied ? (
+            <span className="text-[color:var(--sc-ink-2)]">Copied</span>
+          ) : (
+            <Copy className="h-3.5 w-3.5" aria-hidden />
+          )}
+        </button>
       </div>
       <a
         href={url}

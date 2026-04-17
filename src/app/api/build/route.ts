@@ -26,6 +26,7 @@ import { buildSite, type BuildEvent } from '@/server/ai/orchestrator';
 import type { SitePlan } from '@/server/ai/architect';
 import { injectElementIds } from '@/server/html/augment';
 import { assemblePageHtml } from '@/server/html/template';
+import { runQa } from '@/server/ai/qa';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -115,6 +116,26 @@ export async function POST(req: NextRequest) {
       let plan: SitePlan | null = null;
       // Per-page assembly state, keyed by page slug.
       const pages = new Map<string, PageAssembly>();
+
+      // Run the end-of-build QA pass and emit a `qa` event before `done`.
+      // Failures are swallowed so QA can never block the build signal.
+      const emitQaThenDone = async (): Promise<void> => {
+        try {
+          const report = await runQa(siteId);
+          try {
+            await prisma.site.update({
+              where: { id: siteId },
+              data: { memorySummary: JSON.stringify({ lastQa: report }) },
+            });
+          } catch (persistErr) {
+            console.error('[api/build] qa persist failed', persistErr);
+          }
+          enqueue('qa', { issues: report.issues });
+        } catch (err) {
+          console.error('[api/build] qa failed', err);
+        }
+        enqueue('done', {});
+      };
 
       try {
         const generator = buildSite(prompt);
@@ -265,7 +286,7 @@ export async function POST(req: NextRequest) {
           }
 
           if (evt.type === 'done') {
-            enqueue('done', {});
+            await emitQaThenDone();
             controller.close();
             return;
           }
@@ -279,7 +300,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Generator finished cleanly.
-        enqueue('done', {});
+        await emitQaThenDone();
         try {
           controller.close();
         } catch {

@@ -85,37 +85,32 @@ const INSPECT_HIGHLIGHT_COLOR = '#3b82f6';
 // The selected-state rule stays active regardless of mode so a stale
 // highlight never lingers visually; the parent clears selection on toggle
 // anyway, but this is a safe secondary guarantee.
+// Layout-safe hover/selected styling.
+//
+// Earlier versions forced `position: relative` on every [data-el-id] and used
+// a giant inset box-shadow to paint a translucent fill. Both broke overlapping
+// layouts: the forced positioning hijacked stacking contexts (elements the
+// Designer had `position: absolute` over a nearest-positioned ancestor suddenly
+// positioned against our ring), and the inset shadow rendered above the
+// element's background, visually masking child overlaps.
+//
+// New approach: outline only. Outlines don't participate in layout, don't
+// affect stacking contexts, don't paint over children. We use a thick bright
+// outline that sits *outside* the box (`outline-offset: 2px`) so it surrounds
+// the element without clipping — unmistakable without altering the page. A
+// separate floating overlay (`#__sc_hover_label`) is positioned via JS in
+// `handleIframeLoad` to show the role label without relying on `::after` +
+// positioned ancestor.
 const HOVER_STYLE = `
-/* Injected by Sitecraft editor */
-html.sc-inspect-on [data-el-id] { position: relative; }
+/* Injected by Sitecraft editor — inspect-mode only */
 html.sc-inspect-on [data-el-id]:hover {
-  outline: 2px solid ${INSPECT_HIGHLIGHT_COLOR};
-  outline-offset: -2px;
-  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.12);
+  outline: 3px solid ${INSPECT_HIGHLIGHT_COLOR};
+  outline-offset: 2px;
   cursor: pointer;
 }
-html.sc-inspect-on [data-el-id][data-role]:hover::after {
-  content: attr(data-role);
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 3px 7px;
-  background: #17171a;
-  color: #ffffff;
-  font: 500 10.5px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  border-radius: 4px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08),
-              0 6px 18px -6px rgba(0,0,0,0.4);
-  pointer-events: none;
-  z-index: 2147483647;
-}
 html.sc-inspect-on [data-el-id].sc-selected {
-  outline: 2px solid ${INSPECT_HIGHLIGHT_COLOR} !important;
-  outline-offset: -2px;
-  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.18),
-              0 0 0 4px rgba(59, 130, 246, 0.15) !important;
+  outline: 3px solid ${INSPECT_HIGHLIGHT_COLOR} !important;
+  outline-offset: 2px !important;
 }
 `;
 

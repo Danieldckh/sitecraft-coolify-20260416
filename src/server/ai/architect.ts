@@ -1,11 +1,11 @@
 import { anthropic, MODELS } from './anthropic';
 
 /**
- * Architect — produces the top-level JSON plan for a site.
+ * Architect — produces the top-level JSON plan for a multi-page site.
  *
- * Uses the creative (Opus) model because editorial taste, naming, and
- * cohesive palette choices benefit from the strongest model. Output is
- * strict JSON, validated before returning.
+ * Uses the creative (Opus) model because editorial taste, page decomposition,
+ * naming, and cohesive palette choices benefit from the strongest model.
+ * Output is strict JSON, validated before returning.
  */
 
 export interface SitePlan {
@@ -21,33 +21,53 @@ export interface SitePlan {
     displayFont: string;
     bodyFont: string;
   };
-  sections: { id: string; role: string; brief: string }[];
+  pages: {
+    slug: string; // kebab-case; the landing page MUST be "home"
+    name: string; // "Home", "About", "Store", "Contact", ...
+    brief: string; // 1-2 sentence page purpose
+    sections: {
+      id: string; // kebab-case, unique WITHIN the page
+      role: string; // hero | features | about | cta | footer | …
+      brief: string; // 1-3 sentence section brief
+    }[]; // 3-6 sections per page
+  }[]; // 3-6 pages total; first one MUST be the Home page (slug "home")
 }
 
-const ARCHITECT_SYSTEM = `You are a senior art director and information architect at a boutique design studio. Given a user's description of a site, you produce a tight JSON plan that another designer will use to build each section.
-
-Your job is to make three editorial decisions that carry the entire site:
-  1. A distinctive name (if the user hasn't named it, invent a memorable one).
-  2. A palette of five colors — primary, secondary, accent, ink (dark text), and surface (page background). Colors should feel cohesive and intentional, not random. Avoid cliche SaaS blues unless the user explicitly asks.
-  3. A typography pair — one display font and one body font, both available on Google Fonts. Lean into contrast (e.g. a serif display + sans body, or a geometric sans display + warm serif body). Avoid the obvious pairings (Inter + Inter, Roboto + Open Sans).
-
-Then break the site into 5-8 sections. Each section must have:
-  - id: kebab-case slug, unique within the site (e.g. "hero", "featured-work", "press", "footer").
-  - role: a short descriptor (hero | features | about | gallery | testimonials | pricing | faq | cta | contact | footer | manifesto | process | services | team | press).
-  - brief: 1-3 sentences telling the designer exactly what this section should do, what real copy to feature, and what layout vibe to aim for. Be specific about content — reference the user's domain, not generic placeholders.
+const ARCHITECT_SYSTEM = `You are a senior art director laying out a small-but-complete multi-page website from a single user description. You output a strict JSON plan with:
+- siteName (2–4 words, memorable)
+- palette (5 hex colors: primary, secondary, accent, ink, surface)
+- typography (displayFont + bodyFont, real Google Fonts family names, paired with taste)
+- pages (array, first MUST have slug "home"): [{slug,name,brief,sections:[{id,role,brief}]}]
 
 Rules:
-  - Favor editorial, magazine-style layouts and distinctive structures. Avoid the generic SaaS template (hero + 3-column features + pricing + CTA).
-  - First section is always a hero-like opening; last section is always a footer.
-  - Do not propose sections that require user-uploaded assets; images can be sourced from Unsplash.
-  - Output ONLY a single JSON object. No prose, no markdown fences, no commentary. Just the JSON.
+- 3–6 pages. Pick pages that match the user's description (don't invent generic ones). Every site has Home. Common others: About, Services, Products/Store, Contact, Pricing, Journal/Blog, Case Studies.
+- Each page gets 3–6 sections that make sense for THAT page. Home usually opens with hero + marquee-ish features + proof + CTA. About is story-driven. Store is a product grid + category. Contact is a short hero + form-ish visual + footer.
+- One of the sections on EVERY page should be a \`role: "header-nav"\` section at the top so every page has a consistent header.
+- One of the sections on EVERY page should be a \`role: "footer"\` section at the bottom.
+- Favor distinctive, editorial layouts. Avoid SaaS-template vibes.
+- Palette must feel cohesive and intentional. Avoid cliche SaaS blues unless the user explicitly asks.
+- Typography must lean into contrast (e.g. a serif display + sans body, or a geometric sans display + warm serif body). Avoid obvious pairings (Inter + Inter, Roboto + Open Sans).
+- Section \`id\` is kebab-case and unique WITHIN a page (can be "hero" in multiple pages).
+- Page \`slug\` is kebab-case; the Home page MUST use slug "home" and MUST be first.
+- Section \`brief\` is 1-3 sentences, specific about content — reference the user's domain, not generic placeholders.
+- Do not propose sections that require user-uploaded assets; images can be sourced from Unsplash.
+
+Output STRICT JSON only. No prose, no markdown fences.
 
 JSON schema (strict):
 {
   "siteName": string,
   "palette": { "primary": "#RRGGBB", "secondary": "#RRGGBB", "accent": "#RRGGBB", "ink": "#RRGGBB", "surface": "#RRGGBB" },
   "typography": { "displayFont": string, "bodyFont": string },
-  "sections": [ { "id": string, "role": string, "brief": string }, ... ]  // 5 to 8 entries
+  "pages": [
+    {
+      "slug": string,
+      "name": string,
+      "brief": string,
+      "sections": [ { "id": string, "role": string, "brief": string }, ... ]
+    },
+    ...
+  ]
 }`;
 
 /**
@@ -77,6 +97,10 @@ function extractJsonCandidate(raw: string): string {
 
 function isHexColor(v: unknown): v is string {
   return typeof v === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(v.trim());
+}
+
+function isKebabCase(v: unknown): v is string {
+  return typeof v === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(v);
 }
 
 function validatePlan(parsed: unknown): SitePlan {
@@ -113,33 +137,94 @@ function validatePlan(parsed: unknown): SitePlan {
     throw new Error('Architect plan typography.bodyFont missing.');
   }
 
-  const sections = obj.sections;
-  if (!Array.isArray(sections) || sections.length < 5 || sections.length > 8) {
+  const pages = obj.pages;
+  if (!Array.isArray(pages) || pages.length < 1) {
     throw new Error(
-      `Architect plan "sections" must be an array of 5-8 entries (got ${Array.isArray(sections) ? sections.length : 'non-array'}).`,
+      `Architect plan "pages" must be a non-empty array (got ${Array.isArray(pages) ? pages.length : 'non-array'}).`,
+    );
+  }
+  if (pages.length > 6) {
+    throw new Error(
+      `Architect plan "pages" must be 3–6 entries (got ${pages.length}).`,
     );
   }
 
-  const seenIds = new Set<string>();
-  const validatedSections = sections.map((s, i) => {
-    if (!s || typeof s !== 'object') {
-      throw new Error(`Architect plan section[${i}] is not an object.`);
+  const seenSlugs = new Set<string>();
+  const validatedPages = pages.map((pg, i) => {
+    if (!pg || typeof pg !== 'object') {
+      throw new Error(`Architect plan pages[${i}] is not an object.`);
     }
-    const sec = s as Record<string, unknown>;
-    if (typeof sec.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sec.id)) {
-      throw new Error(`Architect plan section[${i}].id is not kebab-case.`);
+    const page = pg as Record<string, unknown>;
+
+    if (!isKebabCase(page.slug)) {
+      throw new Error(`Architect plan pages[${i}].slug is not kebab-case.`);
     }
-    if (seenIds.has(sec.id)) {
-      throw new Error(`Architect plan section[${i}].id "${sec.id}" is duplicated.`);
+    if (seenSlugs.has(page.slug)) {
+      throw new Error(`Architect plan pages[${i}].slug "${page.slug}" is duplicated.`);
     }
-    seenIds.add(sec.id);
-    if (typeof sec.role !== 'string' || sec.role.trim().length === 0) {
-      throw new Error(`Architect plan section[${i}].role missing.`);
+    seenSlugs.add(page.slug);
+
+    if (i === 0 && page.slug !== 'home') {
+      throw new Error(
+        `Architect plan must have pages[0].slug === "home" (got "${page.slug}").`,
+      );
     }
-    if (typeof sec.brief !== 'string' || sec.brief.trim().length === 0) {
-      throw new Error(`Architect plan section[${i}].brief missing.`);
+
+    if (typeof page.name !== 'string' || page.name.trim().length === 0) {
+      throw new Error(`Architect plan pages[${i}].name missing.`);
     }
-    return { id: sec.id, role: sec.role, brief: sec.brief };
+    if (typeof page.brief !== 'string' || page.brief.trim().length === 0) {
+      throw new Error(`Architect plan pages[${i}].brief missing.`);
+    }
+
+    const sections = page.sections;
+    if (!Array.isArray(sections) || sections.length < 1) {
+      throw new Error(
+        `Architect plan pages[${i}].sections must be a non-empty array.`,
+      );
+    }
+    if (sections.length > 8) {
+      throw new Error(
+        `Architect plan pages[${i}].sections has ${sections.length} entries (max ~6).`,
+      );
+    }
+
+    const seenSectionIds = new Set<string>();
+    const validatedSections = sections.map((s, j) => {
+      if (!s || typeof s !== 'object') {
+        throw new Error(`Architect plan pages[${i}].sections[${j}] is not an object.`);
+      }
+      const sec = s as Record<string, unknown>;
+      if (!isKebabCase(sec.id)) {
+        throw new Error(
+          `Architect plan pages[${i}].sections[${j}].id is not kebab-case.`,
+        );
+      }
+      if (seenSectionIds.has(sec.id)) {
+        throw new Error(
+          `Architect plan pages[${i}].sections[${j}].id "${sec.id}" is duplicated within page "${page.slug}".`,
+        );
+      }
+      seenSectionIds.add(sec.id);
+      if (typeof sec.role !== 'string' || sec.role.trim().length === 0) {
+        throw new Error(
+          `Architect plan pages[${i}].sections[${j}].role missing.`,
+        );
+      }
+      if (typeof sec.brief !== 'string' || sec.brief.trim().length === 0) {
+        throw new Error(
+          `Architect plan pages[${i}].sections[${j}].brief missing.`,
+        );
+      }
+      return { id: sec.id, role: sec.role, brief: sec.brief };
+    });
+
+    return {
+      slug: page.slug,
+      name: (page.name as string).trim(),
+      brief: (page.brief as string).trim(),
+      sections: validatedSections,
+    };
   });
 
   return {
@@ -155,7 +240,7 @@ function validatePlan(parsed: unknown): SitePlan {
       displayFont: (t.displayFont as string).trim(),
       bodyFont: (t.bodyFont as string).trim(),
     },
-    sections: validatedSections,
+    pages: validatedPages,
   };
 }
 
@@ -168,7 +253,7 @@ export async function planSite(userPrompt: string): Promise<SitePlan> {
   try {
     const response = await anthropic.messages.create({
       model: MODELS.creative,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: ARCHITECT_SYSTEM,
       messages: [
         {

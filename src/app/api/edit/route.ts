@@ -1,11 +1,19 @@
-// POST /api/edit — re-prompt a single element with the element-editor model.
+// POST /api/edit — re-prompt a single element on a specific page with the
+// element-editor model.
 //
 // Flow:
-//   1. Validate { siteId, elementId, prompt } (zod).
-//   2. Load Site + Theme + Home Page + target Element (by selectorId).
-//   3. Call editElement() with current HTML + instruction + palette/typography.
-//   4. Persist new HTML on the Element, re-assemble Page.pageHtml from all
-//      elements in orderIdx order, return { html }.
+//   1. Validate { siteId, pageSlug, elementId, prompt } (zod, prompt min 3).
+//   2. Load Site, Theme, and the Page by (siteId, slug=pageSlug).
+//   3. Find the element inside Page.pageHtml via findElementById(elementId).
+//      404 if not found.
+//   4. Call editElement() with current outerHTML + instruction + palette/typography.
+//   5. Splice the replacement back into Page.pageHtml via the `replace` helper
+//      and persist.
+//   6. Respond with { html: newElementHtml }.
+//
+// Page.pageHtml is the source of truth after build completes — we do NOT
+// mutate Element rows here. Those rows are just scratch state used during
+// streaming assembly in /api/build.
 //
 // Runtime: nodejs. Anthropic SDK needs Node APIs.
 
@@ -14,6 +22,7 @@ import { z } from 'zod';
 import { prisma } from '@/server/db/client';
 import { enforceRateLimit } from '@/server/rateLimit';
 import { editElement } from '@/server/ai/editor';
+import { findElementById } from '@/server/html/augment';
 import type { SitePlan } from '@/server/ai/architect';
 
 export const runtime = 'nodejs';
@@ -21,60 +30,12 @@ export const dynamic = 'force-dynamic';
 
 const EditBody = z.object({
   siteId: z.string().min(1),
+  pageSlug: z.string().min(1),
   elementId: z.string().min(1),
   prompt: z.string().min(3).max(4000),
 });
 
 type Palette = SitePlan['palette'];
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function assembleHtml(
-  siteName: string,
-  palette: Palette,
-  typography: { displayFont: string; bodyFont: string },
-  sections: { html: string }[],
-): string {
-  const sectionHtml = sections.map((s) => s.html).join('\n');
-  const { displayFont, bodyFont } = typography;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(siteName)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(displayFont)}:wght@400;600;700&family=${encodeURIComponent(bodyFont)}:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-:root {
-  --c-primary: ${palette.primary};
-  --c-secondary: ${palette.secondary};
-  --c-accent: ${palette.accent};
-  --c-ink: ${palette.ink};
-  --c-surface: ${palette.surface};
-  --f-display: "${displayFont}", serif;
-  --f-body: "${bodyFont}", sans-serif;
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: var(--c-surface); color: var(--c-ink); font-family: var(--f-body); }
-h1, h2, h3, h4 { font-family: var(--f-display); margin: 0; }
-img { max-width: 100%; display: block; }
-a { color: inherit; }
-</style>
-</head>
-<body>
-${sectionHtml}
-</body>
-</html>`;
-}
 
 function isPalette(value: unknown): value is Palette {
   if (!value || typeof value !== 'object') return false;
@@ -112,14 +73,19 @@ export async function POST(req: NextRequest) {
     if (!theme) return NextResponse.json({ error: 'Theme not found' }, { status: 404 });
 
     const page = await prisma.page.findUnique({
-      where: { siteId_slug: { siteId: body.siteId, slug: 'home' } },
+      where: { siteId_slug: { siteId: body.siteId, slug: body.pageSlug } },
     });
     if (!page) return NextResponse.json({ error: 'Page not found' }, { status: 404 });
 
-    const element = await prisma.element.findUnique({
-      where: { pageId_selectorId: { pageId: page.id, selectorId: body.elementId } },
-    });
-    if (!element) return NextResponse.json({ error: 'Element not found' }, { status: 404 });
+    const fullHtml = page.pageHtml ?? '';
+    if (!fullHtml.trim()) {
+      return NextResponse.json({ error: 'Page is not built yet' }, { status: 409 });
+    }
+
+    const target = findElementById(fullHtml, body.elementId);
+    if (!target) {
+      return NextResponse.json({ error: 'Element not found' }, { status: 404 });
+    }
 
     let palette: Palette;
     try {
@@ -137,10 +103,10 @@ export async function POST(req: NextRequest) {
       bodyFont: theme.secondaryFont,
     };
 
-    let newHtml: string;
+    let newElementHtml: string;
     try {
-      newHtml = await editElement({
-        currentHtml: element.html,
+      newElementHtml = await editElement({
+        currentHtml: target.outerHtml,
         userInstruction: body.prompt,
         palette,
         typography,
@@ -150,32 +116,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Edit failed' }, { status: 502 });
     }
 
-    if (typeof newHtml !== 'string' || newHtml.trim().length === 0) {
+    if (typeof newElementHtml !== 'string' || newElementHtml.trim().length === 0) {
       return NextResponse.json({ error: 'Editor returned empty HTML' }, { status: 502 });
     }
 
-    await prisma.element.update({
-      where: { id: element.id },
-      data: { html: newHtml, lastEditedAt: new Date() },
-    });
+    const newPageHtml = target.replace(newElementHtml);
 
-    const allElements = await prisma.element.findMany({
-      where: { pageId: page.id },
-      orderBy: { orderIdx: 'asc' },
-    });
-
-    const fullHtml = assembleHtml(
-      site.name,
-      palette,
-      typography,
-      allElements.map((e) => ({ html: e.html })),
-    );
     await prisma.page.update({
       where: { id: page.id },
-      data: { pageHtml: fullHtml },
+      data: { pageHtml: newPageHtml },
     });
 
-    return NextResponse.json({ html: newHtml });
+    return NextResponse.json({ html: newElementHtml });
   } catch (err) {
     console.error('[api/edit] unexpected error', err);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Download, Home, Loader2 } from 'lucide-react';
+import { ArrowLeft, Download, Loader2 } from 'lucide-react';
 import { Inspector, type SelectedElement } from './inspector';
 
 interface EditorClientProps {
@@ -15,17 +15,42 @@ interface SiteInfo {
   name: string;
 }
 
+interface PageTab {
+  slug: string;
+  name: string;
+}
+
+const HOME_SLUG = 'home';
+
 const HOVER_STYLE = `
 /* Injected by Sitecraft editor */
 [data-el-id] { position: relative; }
 [data-el-id]:hover {
-  outline: 2px solid rgba(59, 130, 246, 0.6);
+  outline: 2px solid rgba(23, 23, 26, 0.55);
   outline-offset: -2px;
   cursor: pointer;
 }
+[data-el-id][data-role]:hover::after {
+  content: attr(data-role);
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 7px;
+  background: #17171a;
+  color: #ffffff;
+  font: 500 10.5px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08),
+              0 6px 18px -6px rgba(0,0,0,0.4);
+  pointer-events: none;
+  z-index: 2147483647;
+}
 [data-el-id].sc-selected {
-  outline: 2px solid rgb(59, 130, 246) !important;
+  outline: 2px solid #17171a !important;
   outline-offset: -2px;
+  box-shadow: 0 0 0 4px rgba(23, 23, 26, 0.08);
 }
 `;
 
@@ -34,9 +59,15 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
   const [site, setSite] = useState<SiteInfo | null>(null);
   const [siteError, setSiteError] = useState<string | null>(null);
   const [iframeNonce, setIframeNonce] = useState(() => Date.now());
+  const [iframeReady, setIframeReady] = useState(false);
   const [selected, setSelected] = useState<SelectedElement | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [applySuccess, setApplySuccess] = useState(false);
+  const [activeSlug, setActiveSlug] = useState<string>(HOME_SLUG);
+  const [pages, setPages] = useState<PageTab[]>([
+    { slug: HOME_SLUG, name: 'Home' },
+  ]);
 
   // Fetch site metadata for the top bar name.
   useEffect(() => {
@@ -50,7 +81,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
         }
         const data = await res.json();
         if (cancelled) return;
-        // GET /api/sites/[id] returns the SiteDTO directly.
         const name = typeof data?.name === 'string' ? data.name : 'Untitled site';
         const id = typeof data?.id === 'string' ? data.id : siteId;
         setSite({ id, name });
@@ -68,8 +98,22 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
 
   const reloadIframe = useCallback(() => {
     setIframeNonce(Date.now());
+    setIframeReady(false);
     setSelected(null);
   }, []);
+
+  const handleTabChange = useCallback(
+    (slug: string) => {
+      if (slug === activeSlug) return;
+      setActiveSlug(slug);
+      setIframeReady(false);
+      setSelected(null);
+      setApplyError(null);
+      setApplySuccess(false);
+      setIframeNonce(Date.now());
+    },
+    [activeSlug],
+  );
 
   // If ?building=1 is still set, poll the preview while the build completes.
   useEffect(() => {
@@ -77,7 +121,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
     const interval = setInterval(() => {
       setIframeNonce(Date.now());
     }, 1500);
-    // Stop polling after 60s as a safety net.
     const stop = setTimeout(() => clearInterval(interval), 60_000);
     return () => {
       clearInterval(interval);
@@ -89,10 +132,58 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
   const handleIframeLoad = useCallback(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
-    const doc = iframe.contentDocument;
+
+    let doc: Document | null = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch {
+      // Same-origin error — cannot introspect the document. Fall back
+      // gracefully to whatever tabs we already have.
+      setIframeReady(true);
+      return;
+    }
     if (!doc) return;
 
-    // Inject hover style (idempotent).
+    setIframeReady(true);
+
+    // Enumerate the page nav links the iframe is rendering. Every page includes
+    // a header-nav with relative anchors like `./home`, `./about`, etc.
+    try {
+      const anchors = Array.from(
+        doc.querySelectorAll('a[href^="./"]'),
+      ) as HTMLAnchorElement[];
+      const seen = new Set<string>();
+      const discovered: PageTab[] = [];
+      for (const a of anchors) {
+        const raw = a.getAttribute('href') || '';
+        // Strip leading "./" and any trailing slash / query / hash.
+        const slug = raw
+          .replace(/^\.\//, '')
+          .replace(/[/?#].*$/, '')
+          .trim();
+        if (!slug || seen.has(slug)) continue;
+        seen.add(slug);
+        const label =
+          (a.textContent || '').trim() ||
+          slug.charAt(0).toUpperCase() + slug.slice(1);
+        discovered.push({ slug, name: label });
+      }
+      if (discovered.length > 0) {
+        // Ensure the current active slug is in the list even if it didn't
+        // appear in the nav (preview may still be materialising).
+        if (!seen.has(activeSlug)) {
+          discovered.unshift({
+            slug: activeSlug,
+            name:
+              activeSlug.charAt(0).toUpperCase() + activeSlug.slice(1),
+          });
+        }
+        setPages(discovered);
+      }
+    } catch {
+      // Ignore and keep existing pages list.
+    }
+
     if (!doc.getElementById('sc-editor-hover-style')) {
       const style = doc.createElement('style');
       style.id = 'sc-editor-hover-style';
@@ -100,7 +191,16 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       doc.head.appendChild(style);
     }
 
-    // Re-apply selected outline if still relevant.
+    // Backfill data-role from the element's first className if missing,
+    // so the hover label has something to show.
+    doc.querySelectorAll('[data-el-id]').forEach((el) => {
+      const node = el as HTMLElement;
+      if (!node.getAttribute('data-role')) {
+        const cls = (node.className || '').toString().split(/\s+/)[0];
+        if (cls) node.setAttribute('data-role', cls);
+      }
+    });
+
     if (selected) {
       const prev = doc.querySelector('.sc-selected');
       if (prev) prev.classList.remove('sc-selected');
@@ -108,7 +208,6 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       if (match) match.classList.add('sc-selected');
     }
 
-    // Attach click handler (once per load).
     const onClick = (e: Event) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
@@ -119,47 +218,64 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
       e.preventDefault();
       e.stopPropagation();
 
-      // Swap selected outline.
-      const prev = doc.querySelector('.sc-selected');
+      const prev = doc!.querySelector('.sc-selected');
       if (prev) prev.classList.remove('sc-selected');
       el.classList.add('sc-selected');
 
       const role = el.getAttribute('data-role') || inferRole(el);
       setSelected({ id, html: el.outerHTML, role });
       setApplyError(null);
+      setApplySuccess(false);
     };
 
     doc.addEventListener('click', onClick, true);
 
-    // Prevent internal anchors from navigating the iframe away.
     const onAnchorClick = (e: Event) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest('a') as HTMLAnchorElement | null;
-      if (anchor && anchor.getAttribute('href')?.startsWith('http')) {
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      // External links: block navigation inside the iframe.
+      if (href.startsWith('http')) {
         e.preventDefault();
+        return;
+      }
+      // Internal page nav: intercept and update the active tab instead of
+      // letting the iframe navigate on its own.
+      if (href.startsWith('./')) {
+        const slug = href
+          .replace(/^\.\//, '')
+          .replace(/[/?#].*$/, '')
+          .trim();
+        if (slug) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleTabChange(slug);
+        }
       }
     };
     doc.addEventListener('click', onAnchorClick);
 
-    // Cleanup when iframe unloads/reloads.
     const cleanup = () => {
-      doc.removeEventListener('click', onClick, true);
-      doc.removeEventListener('click', onAnchorClick);
+      doc!.removeEventListener('click', onClick, true);
+      doc!.removeEventListener('click', onAnchorClick);
     };
     iframe.addEventListener('unload', cleanup, { once: true });
-  }, [selected]);
+  }, [selected, activeSlug, handleTabChange]);
 
   const handleApply = useCallback(
     async (prompt: string) => {
       if (!selected) return;
       setApplying(true);
       setApplyError(null);
+      setApplySuccess(false);
       try {
         const res = await fetch('/api/edit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             siteId,
+            pageSlug: activeSlug,
             elementId: selected.id,
             prompt,
           }),
@@ -170,19 +286,22 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
             const body = await res.json();
             if (body && typeof body.error === 'string') msg = body.error;
           } catch {
-            // ignore
+            /* ignore */
           }
           throw new Error(msg);
         }
-        // Success — reload the iframe to reflect the change.
-        reloadIframe();
+        setApplySuccess(true);
+        // Small delay so the user registers the success state before reload.
+        setTimeout(() => {
+          reloadIframe();
+        }, 350);
       } catch (err) {
         setApplyError(err instanceof Error ? err.message : 'Edit failed');
       } finally {
         setApplying(false);
       }
     },
-    [selected, siteId, reloadIframe],
+    [selected, siteId, activeSlug, reloadIframe],
   );
 
   const handleClearSelection = useCallback(() => {
@@ -194,76 +313,148 @@ export function EditorClient({ siteId, building }: EditorClientProps) {
     }
     setSelected(null);
     setApplyError(null);
+    setApplySuccess(false);
   }, []);
 
   const displayName = site?.name ?? (siteError ? 'Error' : null);
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-neutral-50 text-neutral-900">
+    <div className="flex h-screen w-screen flex-col bg-[color:var(--sc-bg)] text-[color:var(--sc-ink)]">
       {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="text-sm font-medium text-neutral-900 truncate">
-            {displayName ?? (
-              <span className="inline-flex items-center gap-2 text-neutral-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Loading…</span>
-              </span>
-            )}
-          </span>
-          {building ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Building
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-4 md:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link
+            href="/"
+            aria-label="Back to Sitecraft home"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[color:var(--sc-muted)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <span aria-hidden className="h-4 w-px bg-[color:var(--sc-border-strong)]" />
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="inline-block h-4 w-4 rounded-[4px] bg-[color:var(--sc-ink)] shadow-[inset_0_-2px_0_rgba(255,255,255,0.12)]"
+            />
+            <span className="text-[13px] font-medium tracking-tight text-[color:var(--sc-ink)]">
+              Sitecraft
             </span>
-          ) : null}
+          </div>
+          <span aria-hidden className="h-4 w-px bg-[color:var(--sc-border-strong)]" />
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[13px] text-[color:var(--sc-ink-2)]">
+              {displayName ?? (
+                <span className="inline-flex items-center gap-1.5 text-[color:var(--sc-muted)]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading…
+                </span>
+              )}
+            </span>
+            {building ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--sc-muted)]">
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                Building
+              </span>
+            ) : null}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-1.5">
           <a
             href={`/api/export/${siteId}`}
             download
-            className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3 py-1.5 text-[12px] font-medium text-[color:var(--sc-ink-2)] shadow-[0_1px_0_rgba(23,23,26,0.03)] transition-colors hover:bg-[color:var(--sc-panel-2)] hover:text-[color:var(--sc-ink)]"
           >
             <Download className="h-3.5 w-3.5" />
             Export ZIP
           </a>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100"
-          >
-            <Home className="h-3.5 w-3.5" />
-            Home
-          </Link>
         </div>
       </header>
 
       {/* Split view */}
       <div className="flex min-h-0 flex-1">
-        {/* Preview pane (70%) */}
-        <div className="flex min-w-0 flex-[7] items-stretch border-r border-neutral-200 bg-neutral-100">
-          <div className="relative flex-1">
-            <iframe
-              ref={iframeRef}
-              key={iframeNonce}
-              src={`/preview/${siteId}?_=${iframeNonce}`}
-              onLoad={handleIframeLoad}
-              title="Site preview"
-              className="h-full w-full border-0 bg-white"
+        {/* Preview pane (~72%) */}
+        <section className="flex min-w-0 flex-[72] items-stretch bg-[color:var(--sc-bg)] p-4 md:p-5">
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-[color:var(--sc-border)] bg-white shadow-[0_1px_0_rgba(23,23,26,0.04),0_24px_60px_-28px_rgba(23,23,26,0.22)]">
+            <EditorPageTabs
+              pages={pages}
+              activeSlug={activeSlug}
+              onChange={handleTabChange}
             />
+            <div className="relative flex-1 overflow-hidden bg-white">
+              <iframe
+                ref={iframeRef}
+                key={`${activeSlug}-${iframeNonce}`}
+                src={`/preview/${siteId}/${activeSlug}?_=${iframeNonce}`}
+                onLoad={handleIframeLoad}
+                title="Site preview"
+                className={`h-full w-full border-0 bg-white transition-opacity duration-300 ${
+                  iframeReady ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+              {!iframeReady ? (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[color:var(--sc-panel-2)]">
+                  <div className="flex items-center gap-2 rounded-full border border-[color:var(--sc-border)] bg-[color:var(--sc-panel)] px-3 py-1 text-[11px] text-[color:var(--sc-muted)]">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading preview…
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        </section>
 
-        {/* Inspector pane (30%) */}
-        <aside className="flex w-0 flex-[3] min-w-[320px] flex-col bg-white">
+        {/* Inspector pane (~28%) */}
+        <aside className="flex w-0 flex-[28] min-w-[320px] flex-col border-l border-[color:var(--sc-border)] bg-[color:var(--sc-panel)]">
           <Inspector
             selected={selected}
+            pageSlug={activeSlug}
             onClear={handleClearSelection}
             onApply={handleApply}
             busy={applying}
             error={applyError}
+            success={applySuccess}
           />
         </aside>
       </div>
+    </div>
+  );
+}
+
+function EditorPageTabs({
+  pages,
+  activeSlug,
+  onChange,
+}: {
+  pages: PageTab[];
+  activeSlug: string;
+  onChange: (slug: string) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Pages"
+      className="flex shrink-0 items-end overflow-x-auto border-b border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] px-2"
+    >
+      {pages.map((p) => {
+        const active = p.slug === activeSlug;
+        return (
+          <button
+            key={p.slug}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(p.slug)}
+            className={`relative -mb-px shrink-0 border-b-2 px-3 py-2 text-[12px] font-medium transition-colors ${
+              active
+                ? 'border-[color:var(--sc-ink)] text-[color:var(--sc-ink)]'
+                : 'border-transparent text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]'
+            }`}
+          >
+            {p.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -277,7 +468,6 @@ function inferRole(el: HTMLElement): string {
 }
 
 function cssEscape(value: string): string {
-  // Minimal CSS.escape polyfill for older targets.
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
     return CSS.escape(value);
   }

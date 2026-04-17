@@ -1,14 +1,19 @@
-// POST /api/build — SSE stream that drives the Architect + Designer agent team.
+// POST /api/build — SSE stream that drives the multi-page Architect + Designer
+// agent team.
 //
 // Flow:
-//   1. Validate { prompt } (zod, min 10 chars).
+//   1. Validate { prompt } (zod, 10 ≤ len ≤ 8000).
 //   2. Create a pending Site row and immediately emit `event: siteId` so the
 //      client can redirect to /site/[id] while generation is still running.
 //   3. Stream events from `buildSite(prompt)`:
-//        plan    -> persist Theme + Home Page, emit event: plan
-//        section -> upsert Element, rebuild Page.pageHtml, emit event: section
-//        done    -> emit event: done, close
-//        error   -> emit event: error, close
+//        plan    -> persist Site.name, Theme, and ALL Page rows (one per
+//                   plan.pages[]), then emit `event: plan`.
+//        section -> `{ pageSlug, id, html }`
+//                   -> inject element ids, upsert Element under the matching
+//                      Page, re-assemble THAT page's pageHtml from its
+//                      elements (ordered), emit `event: section`.
+//        done    -> emit event: done, close.
+//        error   -> emit event: error, close.
 //   4. Client-abort (req.signal) tears the generator down cleanly.
 //
 // Runtime: nodejs (SSE + long-running Anthropic calls don't fit Edge).
@@ -19,6 +24,7 @@ import { prisma } from '@/server/db/client';
 import { enforceRateLimit } from '@/server/rateLimit';
 import { buildSite, type BuildEvent } from '@/server/ai/orchestrator';
 import type { SitePlan } from '@/server/ai/architect';
+import { injectElementIds } from '@/server/html/augment';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,16 +42,32 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function assembleHtml(plan: SitePlan, sections: { id: string; html: string }[]): string {
+/**
+ * Assemble one page's full HTML document from its ordered section HTML.
+ *
+ * Nav links rendered by "header-nav"/"footer" sections use relative
+ * `./{slug}` hrefs. In the in-iframe preview (`/preview/[id]/[slug]`) those
+ * resolve to sibling pages at `/preview/[id]/{slug}`. The export route
+ * rewrites them to `./{slug}.html` for the standalone zip.
+ */
+function assemblePageHtml(
+  plan: SitePlan,
+  currentPage: SitePlan['pages'][number],
+  sections: { html: string }[],
+): string {
   const sectionHtml = sections.map((s) => s.html).join('\n');
   const displayFont = plan.typography.displayFont;
   const bodyFont = plan.typography.bodyFont;
+  const pageTitle =
+    currentPage.slug === 'home'
+      ? plan.siteName
+      : `${currentPage.name} — ${plan.siteName}`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(plan.siteName)}</title>
+<title>${escapeHtml(pageTitle)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(displayFont)}:wght@400;600;700&family=${encodeURIComponent(bodyFont)}:wght@400;500;600&display=swap" rel="stylesheet">
@@ -76,6 +98,18 @@ ${sectionHtml}
 function sseFrame(event: string, data: unknown): string {
   const payload = typeof data === 'string' ? data : JSON.stringify(data);
   return `event: ${event}\ndata: ${payload}\n\n`;
+}
+
+/**
+ * Snapshot of a page's in-flight assembly. We keep one of these per page
+ * while the generator streams sections so we can re-build `Page.pageHtml`
+ * in the correct section order without re-querying the DB on every tick.
+ */
+interface PageAssembly {
+  pageId: string;
+  plan: SitePlan['pages'][number];
+  /** indexed by section id, slot order comes from the plan's section order */
+  sections: Map<string, string>;
 }
 
 export async function POST(req: NextRequest) {
@@ -133,16 +167,14 @@ export async function POST(req: NextRequest) {
       enqueue('siteId', { siteId });
 
       let plan: SitePlan | null = null;
-      let pageId: string | null = null;
-      const sections: { id: string; html: string }[] = [];
+      // Per-page assembly state, keyed by page slug.
+      const pages = new Map<string, PageAssembly>();
 
       try {
         const generator = buildSite(prompt);
 
         for await (const evt of generator as AsyncGenerator<BuildEvent>) {
           if (abortController.signal.aborted) {
-            // Best-effort: ask the generator to wrap up. Most generators treat
-            // `return()` as a cancel signal.
             try {
               await generator.return?.(undefined);
             } catch {
@@ -173,63 +205,104 @@ export async function POST(req: NextRequest) {
                   secondaryFont: plan.typography.bodyFont,
                 },
               });
-              const page = await prisma.page.upsert({
-                where: { siteId_slug: { siteId, slug: 'home' } },
-                create: {
-                  siteId,
-                  name: 'Home',
-                  slug: 'home',
-                  orderIdx: 0,
-                  navVisible: true,
-                  pageHtml: '',
-                },
-                update: {},
-              });
-              pageId = page.id;
+
+              // Upsert every Page row up-front (one per plan.pages[]) so the
+              // preview route can redirect to the first page immediately.
+              for (let i = 0; i < plan.pages.length; i += 1) {
+                const p = plan.pages[i];
+                const row = await prisma.page.upsert({
+                  where: { siteId_slug: { siteId, slug: p.slug } },
+                  create: {
+                    siteId,
+                    name: p.name,
+                    slug: p.slug,
+                    orderIdx: i,
+                    navVisible: true,
+                    pageHtml: '',
+                  },
+                  update: {
+                    name: p.name,
+                    orderIdx: i,
+                    navVisible: true,
+                  },
+                });
+                pages.set(p.slug, {
+                  pageId: row.id,
+                  plan: p,
+                  sections: new Map<string, string>(),
+                });
+              }
             } catch (err) {
               console.error('[api/build] failed to persist plan', err);
               enqueue('error', { message: 'Failed to persist plan' });
               controller.close();
               return;
             }
-            enqueue('plan', evt.plan);
+            enqueue('plan', plan);
             continue;
           }
 
           if (evt.type === 'section') {
-            if (!plan || !pageId) {
+            if (!plan) {
               console.error('[api/build] section event arrived before plan');
               enqueue('error', { message: 'Section received before plan' });
               controller.close();
               return;
             }
-            try {
-              // Preserve insertion order in our in-memory array. If the same
-              // id comes back twice (regen), replace rather than duplicate.
-              const existingIdx = sections.findIndex((s) => s.id === evt.id);
-              if (existingIdx >= 0) {
-                sections[existingIdx] = { id: evt.id, html: evt.html };
-              } else {
-                sections.push({ id: evt.id, html: evt.html });
-              }
+            const page = pages.get(evt.pageSlug);
+            if (!page) {
+              console.error(
+                `[api/build] section event references unknown pageSlug "${evt.pageSlug}"`,
+              );
+              enqueue('error', {
+                message: `Unknown pageSlug "${evt.pageSlug}"`,
+              });
+              controller.close();
+              return;
+            }
 
+            // ALWAYS inject element ids BEFORE persisting or emitting — the
+            // augmented HTML is the source of truth downstream.
+            const augmentedHtml = injectElementIds(evt.html, evt.id);
+
+            try {
+              page.sections.set(evt.id, augmentedHtml);
+
+              // orderIdx = the section's slot in the plan (stable across
+              // re-runs); sections that arrive "late" still land in the
+              // correct visual order.
+              const orderIdx = page.plan.sections.findIndex((s) => s.id === evt.id);
               await prisma.element.upsert({
-                where: { pageId_selectorId: { pageId, selectorId: evt.id } },
+                where: {
+                  pageId_selectorId: {
+                    pageId: page.pageId,
+                    selectorId: evt.id,
+                  },
+                },
                 create: {
-                  pageId,
+                  pageId: page.pageId,
                   selectorId: evt.id,
                   role: 'custom',
-                  html: evt.html,
-                  orderIdx: sections.length - 1,
+                  html: augmentedHtml,
+                  orderIdx: orderIdx < 0 ? page.sections.size - 1 : orderIdx,
                 },
                 update: {
-                  html: evt.html,
+                  html: augmentedHtml,
+                  orderIdx: orderIdx < 0 ? undefined : orderIdx,
                 },
               });
 
-              const fullHtml = assembleHtml(plan, sections);
+              // Re-assemble this page's HTML from all received sections, in
+              // the plan's declared section order. Missing slots are skipped
+              // until their designer finishes.
+              const orderedSections: { html: string }[] = [];
+              for (const secPlan of page.plan.sections) {
+                const h = page.sections.get(secPlan.id);
+                if (h) orderedSections.push({ html: h });
+              }
+              const fullHtml = assemblePageHtml(plan, page.plan, orderedSections);
               await prisma.page.update({
-                where: { id: pageId },
+                where: { id: page.pageId },
                 data: { pageHtml: fullHtml },
               });
             } catch (err) {
@@ -238,7 +311,11 @@ export async function POST(req: NextRequest) {
               controller.close();
               return;
             }
-            enqueue('section', { id: evt.id, html: evt.html });
+            enqueue('section', {
+              pageSlug: evt.pageSlug,
+              id: evt.id,
+              html: augmentedHtml,
+            });
             continue;
           }
 

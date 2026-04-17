@@ -2,11 +2,151 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+ * Sitecraft builder chrome tokens.
+ *
+ * These tokens describe the *builder itself*, not the site being built
+ * (that palette is scoped inside the iframe). A calm, near-white editorial
+ * surface with a warm-ink body and a single restrained accent.
+ * --------------------------------------------------------------------------- */
+
+:root {
+  /* Chrome palette */
+  --sc-bg: #fafaf7;              /* page background, faintly warm */
+  --sc-panel: #ffffff;           /* cards, top bar, inspector */
+  --sc-panel-2: #f5f5f1;         /* sunken / inset surfaces */
+  --sc-border: #e7e5df;          /* default hairline border */
+  --sc-border-strong: #d6d3cc;   /* emphasized border / divider */
+  --sc-ink: #17171a;             /* primary text, near-black */
+  --sc-ink-2: #3a3a3f;           /* secondary text */
+  --sc-muted: #6b6b72;           /* tertiary text / captions */
+  --sc-muted-2: #9a9aa2;         /* most-muted text, dots */
+  --sc-accent: #17171a;          /* primary action */
+  --sc-accent-hover: #2a2a2f;    /* primary action hover */
+  --sc-accent-soft: #eeeeea;     /* accent tint / chip background */
+  --sc-focus: rgba(23, 23, 26, 0.18);
+  --sc-success: #2f7a4f;
+  --sc-danger: #b2372b;
+
+  /* Fonts (provided by next/font in layout.tsx) */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Instrument Serif', 'Fraunces', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
 @layer base {
-  html, body { height: 100%; }
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+  html,
   body {
-    background-color: rgb(250 250 250);
-    color: rgb(24 24 27);
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    height: 100%;
+  }
+  body {
+    background-color: var(--sc-bg);
+    color: var(--sc-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01', 'ss03', 'cv02';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Thin, calm focus ring across the app. Buttons/links override locally. */
+  :where(button, a, textarea, input, select, [role='button'], [tabindex]):focus-visible {
+    outline: 2px solid var(--sc-ink);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Respect reduced-motion preferences. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Custom scrollbars (webkit). Keep them thin, out of the way. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(23, 23, 26, 0.14);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(23, 23, 26, 0.28);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(23, 23, 26, 0.22) transparent;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+    font-feature-settings: 'liga', 'dlig', 'calt';
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  /* Soft fade-in used by the live preview as it hydrates. */
+  @keyframes sc-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .sc-fade-in {
+    animation: sc-fade-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Subtle pulse for the "connecting" indicator dot. */
+  @keyframes sc-pulse-dot {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.12); }
+  }
+  .sc-pulse-dot {
+    animation: sc-pulse-dot 1.6s ease-in-out infinite;
+  }
+
+  /* Thin indeterminate bar animation for unknown-total progress. */
+  @keyframes sc-indet {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+  .sc-indet-bar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 25%;
+    background: var(--sc-ink);
+    animation: sc-indet 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+
+  /* A faint dotted grid used under the landing — editorial, not techy. */
+  .sc-paper {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(23, 23, 26, 0.045) 1px, transparent 0);
+    background-size: 22px 22px;
   }
 }

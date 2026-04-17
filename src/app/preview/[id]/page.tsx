@@ -1,51 +1,53 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/server/db/client';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * /preview/[id] — serves the home page's raw pageHtml for the given site.
+ * /preview/[id] — redirect to the site's first page.
  *
- * Used by the editor's iframe. The stored HTML (Designer output) is injected
- * into a full-bleed container and its embedded <style> tags are honored by the
- * browser, preserving the data-el-id hooks used for click-to-edit.
+ * The real HTML is served by `/preview/[id]/[slug]`. This route exists so
+ * that a bare `/preview/[id]` URL still lands on the home page (or whichever
+ * page has the lowest orderIdx if the build is mid-flight and "home" hasn't
+ * been persisted yet).
  *
- * Note: the root layout wraps this with <html><body>, so we inject the raw
- * Designer output into a <div> here rather than a full standalone document.
+ * If no pages exist yet (we're inside the build window between the Site row
+ * being created and the Architect's plan being persisted), render a tiny
+ * "building…" placeholder instead of 404-ing.
  */
-export default async function SitePreviewPage({
+export default async function SitePreviewRedirect({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
 
-  // Prefer slug="home" (per spec); fall back to the first page by orderIdx so
-  // partial builds still render.
-  const page =
-    (await prisma.page.findFirst({
-      where: { siteId: id, slug: 'home' },
-    })) ??
-    (await prisma.page.findFirst({
-      where: { siteId: id },
-      orderBy: { orderIdx: 'asc' },
-    }));
+  const firstPage = await prisma.page.findFirst({
+    where: { siteId: id },
+    orderBy: { orderIdx: 'asc' },
+    select: { slug: true },
+  });
 
-  const rawHtml = page?.pageHtml ?? '';
-
-  if (!rawHtml.trim()) {
+  if (!firstPage) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-neutral-50 text-sm text-neutral-500">
-        Waiting for sections…
+      <div
+        style={{
+          display: 'flex',
+          height: '100vh',
+          width: '100%',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: 14,
+          color: '#666',
+          background: '#fafafa',
+        }}
+      >
+        Building site…
       </div>
     );
   }
 
-  return (
-    <div
-      id="sc-preview-root"
-      style={{ minHeight: '100vh', width: '100%' }}
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: rawHtml }}
-    />
-  );
+  redirect(`/preview/${id}/${firstPage.slug}`);
 }

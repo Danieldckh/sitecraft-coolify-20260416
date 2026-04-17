@@ -8,6 +8,8 @@ export interface SelectedElement {
   role?: string;
 }
 
+export type InspectMode = 'inspect' | 'interact';
+
 interface InspectorProps {
   selected: SelectedElement | null;
   /**
@@ -21,6 +23,14 @@ interface InspectorProps {
   busy: boolean;
   error: string | null;
   success?: boolean;
+  /**
+   * Current editor interaction mode. When 'interact', clicks inside the iframe
+   * pass through to the site (links, buttons, etc.) and the inspector shows a
+   * quiet explanatory empty state instead of the usual "click a section" hint.
+   */
+  inspectMode?: InspectMode;
+  /** Callback to flip back to inspect mode from the interact empty state. */
+  onEnableInspect?: () => void;
 }
 
 const KNOWN_SECTION_ROLES = new Set([
@@ -74,17 +84,70 @@ export function Inspector({
   busy,
   error,
   success,
+  inspectMode = 'inspect',
+  onEnableInspect,
 }: InspectorProps) {
   const [draft, setDraft] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [uploadedName, setUploadedName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const selectedId = selected?.id;
   useEffect(() => {
     setDraft('');
+    setUploadedUrl(null);
+    setUploadedName(null);
+    setUploadError(null);
     if (selectedId) {
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }, [selectedId]);
+
+  async function handleFilePick(ev: React.ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/uploads', { method: 'POST', body: fd });
+      if (!res.ok) {
+        let msg = `Upload failed (${res.status})`;
+        try {
+          const body = (await res.json()) as { error?: string };
+          if (body?.error) msg = body.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      const data = (await res.json()) as { url?: string };
+      if (!data.url) throw new Error('Upload returned no URL');
+      setUploadedUrl(data.url);
+      setUploadedName(file.name);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleApplyClick(): void {
+    const base = draft.trim();
+    const imgNote = uploadedUrl
+      ? `The user uploaded a replacement image at "${uploadedUrl}". ` +
+        `Use this exact URL as the src attribute on the <img> tag in this element ` +
+        `(or as the background-image: url("${uploadedUrl}") if the element uses a CSS background).`
+      : '';
+    const combined = [imgNote, base].filter(Boolean).join('\n\n');
+    if (!combined) return;
+    void onApply(combined);
+  }
 
   const truncatedHtml = useMemo(() => {
     if (!selected) return '';
@@ -103,6 +166,31 @@ export function Inspector({
 
   /* ------------------------- Empty state ------------------------- */
   if (!selected) {
+    if (inspectMode === 'interact') {
+      return (
+        <div className="flex h-full flex-col">
+          <InspectorHeader />
+          <div className="flex flex-1 flex-col items-start gap-2 px-5 pt-6">
+            <p className="text-[13px] font-medium leading-snug text-[color:var(--sc-ink)]">
+              Inspect mode is off
+            </p>
+            <p className="text-[12px] leading-relaxed text-[color:var(--sc-muted)]">
+              Toggle inspect on to click elements and edit them.
+            </p>
+            {onEnableInspect ? (
+              <button
+                type="button"
+                onClick={onEnableInspect}
+                className="mt-2 text-[11.5px] font-medium text-[color:var(--sc-muted)] underline decoration-[color:var(--sc-border)] underline-offset-4 transition-colors hover:text-[color:var(--sc-ink)] hover:decoration-[color:var(--sc-ink)]"
+              >
+                Turn inspect on
+              </button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex h-full flex-col">
         <InspectorHeader />
@@ -116,12 +204,14 @@ export function Inspector({
   }
 
   const trimmed = draft.trim();
-  const canSubmit = !busy && trimmed.length > 0;
+  // Allow submit when either a prompt is typed OR an image has been uploaded
+  // (the upload alone is enough context for the Element Editor).
+  const canSubmit = !busy && !uploading && (trimmed.length > 0 || uploadedUrl !== null);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      if (canSubmit) void onApply(trimmed);
+      if (canSubmit) handleApplyClick();
     }
   }
 
@@ -161,6 +251,73 @@ export function Inspector({
           </pre>
         </div>
 
+        {/* Image upload */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[10.5px] font-medium uppercase tracking-[0.12em] text-[color:var(--sc-muted)]">
+              Replace image (optional)
+            </span>
+            {uploadedUrl ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadedUrl(null);
+                  setUploadedName(null);
+                }}
+                className="text-[11px] text-[color:var(--sc-muted)] hover:text-[color:var(--sc-ink)]"
+              >
+                Remove
+              </button>
+            ) : null}
+          </div>
+          {uploadedUrl ? (
+            <div className="flex items-center gap-3 rounded-[10px] border border-[color:var(--sc-border)] bg-[color:var(--sc-panel-2)] p-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={uploadedUrl}
+                alt={uploadedName ?? 'Uploaded'}
+                className="h-10 w-10 shrink-0 rounded-md object-cover"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12px] text-[color:var(--sc-ink)]">
+                  {uploadedName ?? 'Uploaded image'}
+                </p>
+                <p className="truncate font-mono text-[10.5px] text-[color:var(--sc-muted)]">
+                  {uploadedUrl}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-dashed border-[color:var(--sc-border-strong)] bg-[color:var(--sc-panel-2)] px-3 py-3 text-[12.5px] text-[color:var(--sc-ink-2)] transition-colors hover:bg-[color:var(--sc-panel)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {uploading ? (
+                  <>
+                    <InlineSpinner />
+                    Uploading…
+                  </>
+                ) : (
+                  'Upload an image'
+                )}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFilePick}
+              />
+            </>
+          )}
+          {uploadError ? (
+            <p className="mt-1.5 text-[11.5px] text-[color:var(--sc-danger)]">{uploadError}</p>
+          ) : null}
+        </div>
+
         {/* Re-prompt */}
         <div>
           <label
@@ -195,7 +352,7 @@ export function Inspector({
         <button
           type="button"
           disabled={!canSubmit}
-          onClick={() => onApply(trimmed)}
+          onClick={handleApplyClick}
           className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-[color:var(--sc-accent)] px-3 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-[color:var(--sc-accent-hover)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy ? (

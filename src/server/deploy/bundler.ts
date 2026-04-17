@@ -10,10 +10,19 @@
 // rewritten. Only hrefs that match one of the known Page slugs are touched.
 
 import { prisma } from '@/server/db/client';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export interface BundleFile {
   path: string;
   content: string;
+  /**
+   * Encoding of `content`:
+   *   - 'utf-8' (default) — plain text (HTML, Markdown, etc.)
+   *   - 'base64'          — binary (images) already base64-encoded.
+   * The github pusher forwards this as the createBlob encoding.
+   */
+  encoding?: 'utf-8' | 'base64';
 }
 
 export interface BundleResult {
@@ -88,13 +97,44 @@ export async function bundleSite(siteId: string): Promise<BundleResult> {
     files.push({
       path: filenameForSlug(page.slug),
       content: rewritten,
+      encoding: 'utf-8',
     });
+  }
+
+  // Walk the assembled HTML for any /uploads/<filename> refs and pull those
+  // files off disk into the bundle (as base64 blobs). Without this the
+  // deployed site would 404 on every user-uploaded image — they live in the
+  // builder's public/uploads dir, which Coolify never sees.
+  const uploadRefs = new Set<string>();
+  const uploadRefRegex = /\/uploads\/([A-Za-z0-9._-]+)/g;
+  for (const file of files) {
+    let m: RegExpExecArray | null;
+    while ((m = uploadRefRegex.exec(file.content)) !== null) {
+      uploadRefs.add(m[1]);
+    }
+  }
+  if (uploadRefs.size > 0) {
+    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+    for (const name of uploadRefs) {
+      try {
+        const buf = await readFile(path.join(uploadsDir, name));
+        files.push({
+          path: `uploads/${name}`,
+          content: buf.toString('base64'),
+          encoding: 'base64',
+        });
+      } catch {
+        // File missing on disk — skip silently. Live deploy will 404 that one
+        // image, which is a less-bad outcome than failing the whole deploy.
+      }
+    }
   }
 
   const today = new Date().toISOString().slice(0, 10);
   files.push({
     path: 'README.md',
     content: `# ${site.name}\n\nGenerated ${today} with Website Builder.\n\nOpen \`index.html\` in a browser.\n`,
+    encoding: 'utf-8',
   });
 
   return { files, slug: slugifySite(site.name) };

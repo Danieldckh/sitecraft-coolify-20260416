@@ -241,9 +241,16 @@ export async function* runDeploy(siteId: string): AsyncGenerator<DeployEvent> {
     yield { type: 'status', status: 'probing', message: 'Waiting for live response…' };
 
     const refreshed = await getApp(app.uuid).catch(() => app);
-    const url = coerceUrl(refreshed.fqdn);
+    // Coolify populates either `fqdn` or `domains` depending on lifecycle —
+    // prefer fqdn (canonical after first deploy) and fall back to domains
+    // from the create response.
+    const url =
+      coerceUrl(refreshed.fqdn) ??
+      coerceUrl(refreshed.domains) ??
+      coerceUrl(app.fqdn) ??
+      coerceUrl(app.domains);
     if (!url) {
-      throw new Error('Coolify did not expose an FQDN for this deploy');
+      throw new Error('Coolify did not expose a public URL for this deploy');
     }
     await appendLog(deployment.id, `Probing ${url}`);
     const ok = await probeUntilLive(url);

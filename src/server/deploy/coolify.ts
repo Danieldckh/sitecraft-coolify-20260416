@@ -47,6 +47,13 @@ export async function cf<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface CoolifyApp {
   uuid: string;
   fqdn?: string | null;
+  /**
+   * Coolify's POST /applications/public create response returns the public
+   * URL under `domains` (e.g. "http://<uuid>.<ip>.sslip.io"). Subsequent
+   * GET /applications/<uuid> responses expose it under `fqdn`. Both may be
+   * null on very fresh apps — the orchestrator falls through them in order.
+   */
+  domains?: string | null;
   status?: string;
   git_repository?: string;
   git_branch?: string;
@@ -115,11 +122,19 @@ export async function ensureStaticApp(input: EnsureStaticAppInput): Promise<Cool
     ports_exposes: '80',
   };
 
-  const created = await cf<{ uuid: string }>('/applications/public', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  return getApp(created.uuid);
+  const created = await cf<{ uuid: string; domains?: string | null }>(
+    '/applications/public',
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  // The create response carries the auto-assigned public URL under `domains`
+  // (typically http://<uuid>.<ip>.sslip.io). Preserve it on the returned app
+  // object — `getApp()` sometimes doesn't populate `fqdn` until after the
+  // first deploy lands.
+  const app = await getApp(created.uuid);
+  if (!app.fqdn && !app.domains && created.domains) {
+    app.domains = created.domains;
+  }
+  return app;
 }
 
 export function triggerDeploy(

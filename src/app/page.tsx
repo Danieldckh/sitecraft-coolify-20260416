@@ -84,6 +84,7 @@ export default function Landing() {
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const siteIdRef = useRef<string | null>(null);
 
   // Sites grid (idle state only).
   const [sites, setSites] = useState<SiteListItem[]>([]);
@@ -221,6 +222,7 @@ export default function Landing() {
     setPhase('idle');
     setError(null);
     setSiteId(null);
+    siteIdRef.current = null;
     setSiteName(null);
     setPages([]);
     setActiveSlug(HOME_SLUG);
@@ -244,6 +246,7 @@ export default function Landing() {
     const decoder = new TextDecoder();
     let buffer = '';
     let capturedSiteId: string | null = null;
+    let streamError: string | null = null;
 
     const onEvent = (eventName: string, dataRaw: string) => {
       let data: unknown = undefined;
@@ -265,6 +268,7 @@ export default function Landing() {
                 : undefined;
           if (id) {
             capturedSiteId = id;
+            siteIdRef.current = id;
             setSiteId(id);
             setIframeNonce(Date.now());
             setStatusText('Planning…');
@@ -403,7 +407,9 @@ export default function Landing() {
               : typeof data === 'string'
                 ? data
                 : 'Build failed';
-          setError(msg);
+          streamError = msg;
+          // Mark any in-flight section as errored — the retry path will
+          // re-activate it when the next stream reopens.
           setSections((prev) =>
             prev.map((s) =>
               s.status === 'active' ? { ...s, status: 'error' } : s,
@@ -465,6 +471,12 @@ export default function Landing() {
       flushBuffer();
     }
 
+    if (streamError) {
+      // Server emitted `event: error` mid-stream — surface it so the caller
+      // can decide whether to retry via /api/continue.
+      throw new Error(streamError);
+    }
+
     return capturedSiteId;
   }, []);
 
@@ -479,6 +491,7 @@ export default function Landing() {
 
       setError(null);
       setSiteId(null);
+      siteIdRef.current = null;
       setSiteName(null);
       setPages([]);
       setActiveSlug(HOME_SLUG);
@@ -491,9 +504,12 @@ export default function Landing() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      let res: Response;
+      // Perform the initial POST /api/build. Network errors or non-OK responses
+      // here short-circuit straight to the error view (no retry — the build
+      // hasn't even started, so there's nothing to resume).
+      let initialRes: Response;
       try {
-        res = await fetch('/api/build', {
+        initialRes = await fetch('/api/build', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: prompt.trim() }),
@@ -506,14 +522,14 @@ export default function Landing() {
         return;
       }
 
-      if (!res.ok) {
-        let msg = `Build failed (${res.status})`;
+      if (!initialRes.ok) {
+        let msg = `Build failed (${initialRes.status})`;
         try {
-          const body = await res.json();
+          const body = await initialRes.json();
           if (body && typeof body.error === 'string') msg = body.error;
         } catch {
           try {
-            const text = await res.text();
+            const text = await initialRes.text();
             if (text) msg = text;
           } catch {
             /* ignore */
@@ -524,19 +540,86 @@ export default function Landing() {
         return;
       }
 
-      try {
-        const captured = await consumeStream(res);
-        if (!captured && !siteId) {
-          setError('Build completed but no site id was returned.');
-          setPhase('error');
+      // Retry wrapper: consume the initial build stream. If it throws (either
+      // a mid-stream `event: error` or a network failure), wait with backoff
+      // and resume via POST /api/continue. Give up after 3 retry attempts
+      // (4 total tries including the initial build), then fall through to
+      // the existing ErrorView as a manual last resort.
+      const MAX_ATTEMPTS = 4;
+      const BACKOFFS_MS = [1500, 3000, 6000]; // applied before attempt 2, 3, 4
+      let attempt = 0;
+      let currentResponse: Response = initialRes;
+      let lastErr: unknown = null;
+
+      while (attempt < MAX_ATTEMPTS) {
+        try {
+          const captured = await consumeStream(currentResponse);
+          if (!captured && !siteIdRef.current) {
+            setError('Build completed but no site id was returned.');
+            setPhase('error');
+          }
+          return;
+        } catch (err) {
+          if ((err as { name?: string })?.name === 'AbortError') return;
+          lastErr = err;
+          attempt += 1;
+          if (attempt >= MAX_ATTEMPTS) break;
+
+          const currentSiteId = siteIdRef.current;
+          if (!currentSiteId) {
+            // Nothing to continue — the initial stream failed before we got a
+            // siteId. Surface the error immediately.
+            break;
+          }
+
+          const backoff = BACKOFFS_MS[attempt - 1] ?? 6000;
+          setStatusText(
+            `Retrying… (attempt ${attempt + 1}/${MAX_ATTEMPTS})`,
+          );
+          await new Promise((r) => setTimeout(r, backoff));
+          if (controller.signal.aborted) return;
+
+          try {
+            currentResponse = await fetch('/api/continue', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ siteId: currentSiteId }),
+              signal: controller.signal,
+            });
+          } catch (fetchErr) {
+            if ((fetchErr as { name?: string })?.name === 'AbortError') return;
+            lastErr = fetchErr;
+            continue;
+          }
+
+          if (!currentResponse.ok) {
+            try {
+              const body = await currentResponse.json();
+              if (body && typeof body.error === 'string') {
+                lastErr = new Error(body.error);
+              } else {
+                lastErr = new Error(
+                  `Resume failed (${currentResponse.status})`,
+                );
+              }
+            } catch {
+              lastErr = new Error(
+                `Resume failed (${currentResponse.status})`,
+              );
+            }
+            continue;
+          }
+
+          // Reset transient error/done state before re-consuming.
+          setDone(false);
+          setStatusText('Resuming…');
         }
-      } catch (err) {
-        if ((err as { name?: string })?.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : 'Stream error');
-        setPhase('error');
       }
+
+      setError(lastErr instanceof Error ? lastErr.message : 'Stream error');
+      setPhase('error');
     },
-    [canSubmit, prompt, siteId, consumeStream],
+    [canSubmit, prompt, consumeStream],
   );
 
   /* -------------------------------------------------- */

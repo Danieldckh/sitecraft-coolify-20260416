@@ -147,14 +147,16 @@ export async function pushFiles(
   });
   const baseTreeSha = baseCommit.data.tree.sha;
 
-  // Create a blob per file (utf-8 payloads; bundler only emits text).
+  // Create a blob per file. Most are UTF-8 HTML/Markdown; user-uploaded
+  // images ride through as pre-encoded base64 so they land in the repo as
+  // binary blobs.
   const blobs = await Promise.all(
     files.map(async (f) => {
       const { data } = await octokit.rest.git.createBlob({
         owner,
         repo,
         content: f.content,
-        encoding: 'utf-8',
+        encoding: f.encoding ?? 'utf-8',
       });
       return { path: f.path, sha: data.sha };
     }),
